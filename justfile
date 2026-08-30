@@ -27,12 +27,14 @@ fmt:
 
 # The two ignored shellcheck codes are style hints from the dist-generated
 # release.yml, which we must not hand-edit (drift check); accepted policy.
+# No path argument: actionlint discovers .github/workflows/ itself, because
+# the Windows shell (PowerShell) does not expand globs for native commands.
 
 # Static checks: rustfmt --check, clippy (-D warnings), actionlint on workflow YAML
 lint:
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets -- -D warnings
-    actionlint -ignore 'SC2086' -ignore 'SC2129' .github/workflows/*.yml
+    actionlint -ignore 'SC2086' -ignore 'SC2129'
 
 # Tests: nextest (process isolation) + doctests (README/rustdoc examples are compiled too)
 test:
