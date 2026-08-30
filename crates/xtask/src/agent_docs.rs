@@ -86,18 +86,15 @@ fn check_skill(path: &Path, root: &Path, failures: &mut Vec<String>) {
         failures.push(format!("{rel}: unreadable"));
         return;
     };
-    if !text.starts_with("---\n") {
-        failures.push(format!(
-            "{rel}: missing YAML frontmatter (must start with ---)"
-        ));
-        return;
-    }
-    let Some(end) = text[4..].find("\n---\n").map(|index| index + 4) else {
-        failures.push(format!("{rel}: frontmatter is not closed with ---"));
-        return;
+    let (frontmatter_text, body) = match split_frontmatter(&text) {
+        Ok(parts) => parts,
+        Err(reason) => {
+            failures.push(format!("{rel}: {reason}"));
+            return;
+        }
     };
 
-    let frontmatter = parse_frontmatter(&text[4..end], &rel, failures);
+    let frontmatter = parse_frontmatter(&frontmatter_text, &rel, failures);
 
     let unknown: Vec<&String> = frontmatter
         .keys()
@@ -133,13 +130,27 @@ fn check_skill(path: &Path, root: &Path, failures: &mut Vec<String>) {
         Some(_) => {}
     }
 
-    let body = &text[end + 5..];
     if body.chars().count() > SKILL_BODY_BUDGET_CHARS {
         failures.push(format!(
             "{rel}: body is {} chars, exceeding the {SKILL_BODY_BUDGET_CHARS}-char budget — move detail into reference files inside the skill directory",
             body.chars().count()
         ));
     }
+}
+
+/// Split raw file text into (frontmatter, body), keeping the two failure
+/// modes apart for actionable messages. Windows checkouts may carry CRLF
+/// line endings (git autocrlf); YAML hosts accept both, so normalize before
+/// the line-oriented split.
+fn split_frontmatter(text: &str) -> Result<(String, String), &'static str> {
+    let text = text.replace("\r\n", "\n");
+    let Some(rest) = text.strip_prefix("---\n") else {
+        return Err("missing YAML frontmatter (must start with ---)");
+    };
+    let Some(end) = rest.find("\n---\n") else {
+        return Err("frontmatter is not closed with ---");
+    };
+    Ok((rest[..end].to_string(), rest[end + 5..].to_string()))
 }
 
 /// Parse the single-line `key: value` subset this checker supports. There is
@@ -263,6 +274,28 @@ mod tests {
         let mut failures = Vec::new();
         let frontmatter = parse_frontmatter(text, "test/SKILL.md", &mut failures);
         (frontmatter, failures)
+    }
+
+    #[test]
+    fn split_tolerates_crlf_checkouts() {
+        // git materializes CRLF on Windows checkouts (autocrlf); YAML hosts
+        // accept both endings, so the checker must too.
+        let (frontmatter, body) =
+            split_frontmatter("---\r\nname: x\r\n---\r\nbody\r\n").expect("valid frontmatter");
+        assert_eq!(frontmatter, "name: x");
+        assert_eq!(body, "body\n");
+    }
+
+    #[test]
+    fn split_distinguishes_open_and_close_failures() {
+        assert_eq!(
+            split_frontmatter("name: x\n").unwrap_err(),
+            "missing YAML frontmatter (must start with ---)"
+        );
+        assert_eq!(
+            split_frontmatter("---\nname: x\n").unwrap_err(),
+            "frontmatter is not closed with ---"
+        );
     }
 
     #[test]
