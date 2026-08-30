@@ -12,6 +12,11 @@ homepage.workspace = true
 [lints]
 workspace = true
 
+# the GitHub Release body is generated from this changelog's matching section
+# (module-grouped per the [changelog] config in release-plz.toml)
+[package.metadata.dist]
+changelog = "../../CHANGELOG.md"
+
 [dependencies]
 clap.workspace = true
 thiserror.workspace = true

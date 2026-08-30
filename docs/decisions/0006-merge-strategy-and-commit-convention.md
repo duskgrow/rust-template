@@ -25,4 +25,5 @@ ADR-0003 made commit messages the version-intent SSOT and enforced Conventional 
 
 - The version-intent chain is: PR title (CI-checked) → squash commit → release-plz version/changelog. No unchecked path into main's history short of an admin override.
 - The checker is ours: ~150 lines of std-only Rust in `crates/xtask`, unit-tested in the existing nextest harness, gated by the same clippy/fmt as product code. Rule changes land in one place and propagate to both hook and CI.
+- Scope is optional but load-bearing downstream: release-plz's `[changelog]` commit_parsers group by scope, so each version's release notes have one section per module (Zed-style), and cargo-dist renders the same section as the GitHub Release body.
 - Trade-off accepted: body content (beyond footer formatting) is not machine-checked; the PR template + review culture cover it.

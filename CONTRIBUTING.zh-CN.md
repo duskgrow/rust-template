@@ -22,7 +22,7 @@ git 钩子（pre-commit + commit-msg）在进入 devShell 时自动安装——g
     type(scope)!: subject
 
 - `type`：`feat fix docs style refactor perf test build ci chore revert` 之一（小写）
-- `scope`：可选，小写（crate 名、`cli` 等）；`!` 标记破坏性变更（或 footer `BREAKING CHANGE:`）
+- `scope`：可选，小写（crate 名、`cli` 等）；`!` 标记破坏性变更（或 footer `BREAKING CHANGE:`）。scope 同时是 changelog 的模块小节名（release notes 按 scope 分组，Zed 风格），建议填写
 - `subject`：纯英文 ASCII；整个 header 不超过 100 字符
 - body：随意——可中文、不限行宽；与 header 之间空一行
 - footer（`BREAKING CHANGE:` / `TOKEN: value` / `TOKEN #value`）：前留空行
@@ -66,7 +66,9 @@ just new-crate <name>
 
 1. 推 tag `vX.Y.Z`；
 2. 发布 crates.io（OIDC Trusted Publishing，无长期 token）；
-3. tag 触发 cargo-dist：四平台构建 → GitHub Release（含安装脚本、checksum、attestation）。
+3. tag 触发 cargo-dist：四平台构建 → GitHub Release（含安装脚本、checksum、attestation），Release 正文渲染该版本的按模块分组 changelog 小节。
+
+changelog 由提交信息生成并按模块分组：commit 的 scope（`feat(cli): …`）即小节名——写好带 scope 的提交，发布说明就免费得到了。
 
 不想发版就不合并——Release PR 会自动累积更新。
 

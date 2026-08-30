@@ -24,7 +24,7 @@ Commit convention — modified Conventional Commits:
     type(scope)!: subject
 
 - `type`: one of `feat fix docs style refactor perf test build ci chore revert` (lowercase)
-- `scope`: optional, lowercase (crate name, `cli`, …); `!` marks breaking (or a `BREAKING CHANGE:` footer)
+- `scope`: optional, lowercase (crate name, `cli`, …); `!` marks breaking (or a `BREAKING CHANGE:` footer). Scope doubles as the changelog's module section (release notes are grouped by scope, Zed-style), so prefer setting it
 - `subject`: pure-ASCII English; the whole header is at most 100 chars
 - body: free-form — any language, no line-width limit; separated from the header by one blank line
 - footer (`BREAKING CHANGE:` / `TOKEN: value` / `TOKEN #value`): preceded by a blank line
@@ -68,7 +68,9 @@ Nothing to do day to day. release-plz keeps a Release PR up to date (version + C
 
 1. tag `vX.Y.Z` is pushed;
 2. crates.io publish via OIDC Trusted Publishing (no long-lived token);
-3. the tag triggers cargo-dist: four-platform builds → GitHub Release (installers, checksums, attestation).
+3. the tag triggers cargo-dist: four-platform builds → GitHub Release (installers, checksums, attestation) whose body renders the version's module-grouped changelog section.
+
+The changelog is generated from commit messages, grouped by module: the commit scope (`feat(cli): …`) becomes the section name, so scoped commits write the release notes for free.
 
 Don't want to release yet? Just don't merge — the Release PR accumulates and updates itself.
 

@@ -30,7 +30,7 @@ nix run github:duskgrow/rust-template -- my-cli your-github-name   # 拷贝 + �
 | 测试 | cargo-nextest（进程隔离）+ doctest + insta 快照（CI 只读、人工批准） | `.config/nextest.toml` |
 | 依赖治理 | cargo-deny 四检查（安全公告 / 许可证 / 重复版本 / 来源） | `deny.toml` |
 | 提交信息 | 修改版 Conventional Commits（`type(scope): subject`，ASCII subject，header ≤100 字符），squash-only 合并；commit-msg 钩子与 CI 检查 PR 标题双端强制 | `crates/xtask`（`check-commit`） |
-| Changelog | release-plz 自动生成（Keep a Changelog），日常条目不手写 | `CHANGELOG.md`（生成物） |
+| Changelog | release-plz 从提交信息生成，按模块（commit scope）分组；日常条目不手写 | `CHANGELOG.md`（生成物） |
 | 版本与发布 | Release PR 人工闸门 → tag `v*` → crates.io（OIDC Trusted Publishing） | `release-plz.toml` |
 | 跨平台分发 | cargo-dist：四平台产物 + shell/powershell 安装脚本 + GitHub attestation | `dist-workspace.toml` |
 | CI | 薄编排（`nix develop -c just ci` / `prek run`），action 按完整 SHA 钉死 | `.github/workflows/` |
