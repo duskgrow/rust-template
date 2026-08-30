@@ -14,6 +14,12 @@ fn cli() -> Command {
 fn help_output() {
     let assert = cli().arg("--help").assert().success();
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
+    // clap derives the usage-line program name from argv[0], which carries an
+    // .exe suffix on Windows; normalize so one snapshot serves all platforms.
+    let stdout = stdout.replace(
+        &format!("{}.exe", env!("CARGO_PKG_NAME")),
+        env!("CARGO_PKG_NAME"),
+    );
     insta::assert_snapshot!(stdout);
 }
 
