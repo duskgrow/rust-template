@@ -1,0 +1,17 @@
+# release-plz: Conventional Commits → Release PR (human gate) → tag + crates.io on merge.
+# Config reference: https://release-plz.dev/docs/config
+[workspace]
+# new crates are NOT managed by release-plz unless registered as [[package]] below
+release = false
+# tag format aligned with cargo-dist's trigger (v*)
+git_tag_name = "v{{ version }}"
+# the GitHub Release (with cross-platform binaries and installers) is created
+# by cargo-dist — release-plz must not create a second one
+git_release_enable = false
+# changelog: the built-in Keep a Changelog format (git-cliff engine), no extra
+# config needed; semver_check is on by default and annotates public-API breakage
+# in the Release PR
+
+[[package]]
+name = "__project_name__"
+release = true
