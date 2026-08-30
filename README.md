@@ -10,12 +10,10 @@ Prerequisite: [Nix](https://nixos.org/download/) with flakes enabled (direnv opt
 
 ```bash
 mkdir my-cli && cd my-cli
-nix run github:your-org/rust-template -- my-cli your-github-name   # copy + rename + strip + git init + stage + git hooks — one command
+nix run github:duskgrow/rust-template -- my-cli your-github-name   # copy + rename + strip + git init + stage + git hooks — one command
 ```
 
-<!-- template maintainer: after publishing, replace `your-org` above with this repo's actual location. -->
-
-Equivalent two-step path: `nix flake init -t github:your-org/rust-template` (copy only, no git history), then `nix develop -c just init my-cli your-github-name`.
+Equivalent two-step path: `nix flake init -t github:duskgrow/rust-template` (copy only, no git history), then `nix develop -c just init my-cli your-github-name`.
 
 You end up with a project that looks hand-built from an empty repository: zero template residue (this README, the init script, the spec report, and the smoke-test CI job are all removed) and an empty git history — the whole tree is staged and the first commit is yours.
 

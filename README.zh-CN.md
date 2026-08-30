@@ -10,10 +10,10 @@
 
 ```bash
 mkdir my-cli && cd my-cli
-nix run github:your-org/rust-template -- my-cli your-github-name   # 拷贝 + 改名 + 清理模板制品 + git init + 暂存 + git 钩子——一条命令
+nix run github:duskgrow/rust-template -- my-cli your-github-name   # 拷贝 + 改名 + 清理模板制品 + git init + 暂存 + git 钩子——一条命令
 ```
 
-等价的两步路径：`nix flake init -t github:your-org/rust-template`（仅拷贝，无 git 历史），再 `nix develop -c just init my-cli your-github-name`。
+等价的两步路径：`nix flake init -t github:duskgrow/rust-template`（仅拷贝，无 git 历史），再 `nix develop -c just init my-cli your-github-name`。
 
 结束后你就得到一个"从空仓库长出来"的项目：模板制品（模板 README、init 脚本、规范报告、冒烟自检 CI job）全部移除，git 历史为空——全部文件已暂存，第一个 commit 由你亲手提交。
 
