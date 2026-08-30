@@ -35,6 +35,8 @@
             cargo-semver-checks # public-API breakage gate (pre-release)
             cargo-dist # cross-platform release; keep in sync with dist-workspace.toml
             actionlint # static analysis for GitHub Actions workflows
+            nixd # Nix language server
+            nil # Nix language server (alternative — an editor uses one of the two)
           ]);
 
           shellHook = ''
