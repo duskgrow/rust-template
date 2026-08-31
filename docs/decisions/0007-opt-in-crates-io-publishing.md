@@ -19,14 +19,15 @@ default:
 
 ## Decision
 
-- Generated projects run release-plz with `git_only = true, publish = false`:
-  versions come from git tags, no cargo registry is ever contacted, and the
-  release workflow holds no crates.io credential or OIDC permission.
+- Generated projects run release-plz with workspace-wide `git_only = true` +
+  `publish = false`: versions come from git tags, no cargo registry is ever
+  contacted (not even for crates added later), and the release workflow holds
+  no crates.io credential or OIDC permission.
 - `release_always = false`: only merging the Release PR tags a release, so the
   human gate ADR-0003 describes actually holds for the first release too.
-- Opting into crates.io is a documented explicit edit: drop the two config
-  lines, add `id-token: write` to the release job, first manual publish + TP
-  registration (CONTRIBUTING.md "Releasing").
+- Opting into crates.io is a documented explicit edit: drop the two
+  workspace config lines, add `id-token: write` to the release job, first
+  manual publish + TP registration (CONTRIBUTING.md "Releasing").
 
 ## Consequences
 
