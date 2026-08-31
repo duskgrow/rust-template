@@ -17,7 +17,7 @@ nix run github:duskgrow/rust-template -- my-cli your-github-name   # 拷贝 + �
 
 结束后你就得到一个"从空仓库长出来"的项目：模板制品（模板 README、init 脚本、规范报告、冒烟自检 CI job）全部移除，git 历史为空——全部文件已暂存，第一个 commit 由你亲手提交。
 
-不用 Nix 命令行也行：把本仓库标记为 Template repository（Settings → General → Template repository），点 "Use this template" 建仓库——一个一次性 workflow 会自动完成初始化（仓库名即项目名，请用 kebab-case；workflow 随后自毁，其 GITHUB_TOKEN 推送按 GitHub 递归保护不触发 CI——你的首次推送才会触发）。等价本地路径：clone 后跑 `nix develop -c just init <name> <owner>`。
+不用 Nix 命令行也行：把本仓库标记为 Template repository（Settings → General → Template repository），点 "Use this template" 建仓库——一个一次性 workflow 会自动完成初始化（仓库名即项目名——大写会自动转为 kebab-case 的 crate 名；workflow 随后自毁，其 GITHUB_TOKEN 推送按 GitHub 递归保护不触发 CI——你的首次推送才会触发）。等价本地路径：clone 后跑 `nix develop -c just init <name> <owner>`。
 
 ## 包含什么
 
@@ -31,7 +31,7 @@ nix run github:duskgrow/rust-template -- my-cli your-github-name   # 拷贝 + �
 | 依赖治理 | cargo-deny 四检查（安全公告 / 许可证 / 重复版本 / 来源） | `deny.toml` |
 | 提交信息 | 修改版 Conventional Commits（`type(scope): subject`，ASCII subject，header ≤100 字符），squash-only 合并；commit-msg 钩子与 CI 检查 PR 标题双端强制 | `crates/xtask`（`check-commit`） |
 | Changelog | release-plz 从提交信息生成，按模块（commit scope）分组；日常条目不手写 | `CHANGELOG.md`（生成物） |
-| 版本与发布 | Release PR 人工闸门 → tag `v*` → crates.io（OIDC Trusted Publishing） | `release-plz.toml` |
+| 版本与发布 | Release PR 人工闸门 → tag `v*` → dist GitHub Release；crates.io 可选启用（OIDC Trusted Publishing） | `release-plz.toml` |
 | 跨平台分发 | cargo-dist：四平台产物 + shell/powershell 安装脚本 + GitHub attestation | `dist-workspace.toml` |
 | CI | 薄编排（`nix develop -c just ci` / `prek run`），action 按完整 SHA 钉死 | `.github/workflows/` |
 | Agent 接入 | AGENTS.md（只含增量信息）+ `.agents/skills/` 判断层 skill + `just agent-check` 冒烟校验 | `AGENTS.md`、`.agents/skills/` |
@@ -43,9 +43,9 @@ nix run github:duskgrow/rust-template -- my-cli your-github-name   # 拷贝 + �
 
 1. 日常用 Conventional Commits 提交（`feat:` / `fix:` / `!` 即版本意图）；
 2. release-plz 自动维护一个 Release PR：算版本号、更新 CHANGELOG、跑 cargo-semver-checks；
-3. 你点 merge → 自动推 tag `vX.Y.Z`、发布 crates.io（OIDC，无长期 token）、触发 cargo-dist 构建四平台产物并创建带 checksum 与 attestation 的 GitHub Release。
+3. 你点 merge → 自动推 tag `vX.Y.Z`、触发 cargo-dist 构建四平台产物并创建带 checksum 与 attestation 的 GitHub Release。（crates.io 发布为可选启用——OIDC Trusted Publishing，无长期 token——未启用前不会发布。）
 
-首次启用的一次性设置（约 5 分钟）：见 [CONTRIBUTING.zh-CN.md「发布」](./CONTRIBUTING.zh-CN.md#发布)。
+首次启用的一次性设置：见 [CONTRIBUTING.zh-CN.md「发布」](./CONTRIBUTING.zh-CN.md#发布)（Release PR 只需一个 GitHub 开关；crates.io 发布是独立的可选启用项）。
 
 ## 目录导览
 
@@ -57,7 +57,6 @@ nix run github:duskgrow/rust-template -- my-cli your-github-name   # 拷贝 + �
 ## 按需裁剪
 
 - 纯库项目：删除 `dist-workspace.toml` 与 `.github/workflows/release.yml`
-- 不发 crates.io：`release-plz.toml` 里对应包设 `publish = false`（保留 tag 与 GitHub Release）
 - 不要 Windows 支持：删 ci.yml 的 `test-windows` job 与 `dist-workspace.toml` 里的 msvc target
 - 需要原生 Windows 开发：走 WSL2（见 docs/decisions/0004）
 

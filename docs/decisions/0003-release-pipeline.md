@@ -1,6 +1,6 @@
 # 0003. Release pipeline: release-plz + cargo-dist + OIDC Trusted Publishing
 
-- Status: accepted (commit-message enforcement tooling amended by ADR-0006)
+- Status: accepted (commit-message enforcement tooling amended by ADR-0006; crates.io publishing default amended by ADR-0007)
 - Date: 2026-08-29
 
 ## Context
