@@ -119,6 +119,10 @@ pub fn run(args: &[String]) -> ExitCode {
             "just init my-cli octocat",
         );
     };
+    // GitHub repository names often carry capitals (e.g. "Cadmus") while crate
+    // names must not — normalize case instead of rejecting; other invalid
+    // characters still fail the kebab-case check below.
+    let name = &name.to_lowercase();
     if !is_kebab_case(name) {
         return fail(
             &format!("invalid project name: '{name}'"),
@@ -166,8 +170,8 @@ Next steps:
   6. Lock the repo down            see CONTRIBUTING.md \"Repository settings\"
      (squash-only merge + branch protection — the hard boundary that keeps
      both humans and agents from merging red code)
-  7. One-time release setup        see CONTRIBUTING.md \"Releasing\"
-     (GitHub permissions + first manual crates.io publish + Trusted Publishing)
+  7. Release setup                 see CONTRIBUTING.md \"Releasing\"
+     (GitHub Actions permissions; crates.io publishing stays off until you opt in)
 "
     );
     ExitCode::SUCCESS

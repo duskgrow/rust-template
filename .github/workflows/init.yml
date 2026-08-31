@@ -31,8 +31,8 @@ jobs:
         run: echo "pending=$([ -d crates/__project_name__ ] && gh api "repos/${{ github.repository }}" --jq '.template_repository != null' || echo false)" >> "$GITHUB_OUTPUT"
       - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
         if: steps.guard.outputs.pending == 'true'
-      # the repository name doubles as the project name, so it must be
-      # kebab-case (init validates and fails with guidance otherwise)
+      # the repository name doubles as the project name; init lowercases it
+      # into the kebab-case crate name and validates the rest with guidance
       - run: nix develop -c just init "${{ github.event.repository.name }}" "${{ github.repository_owner }}"
         if: steps.guard.outputs.pending == 'true'
       # init already staged this file's deletion; the commit runs inside the
