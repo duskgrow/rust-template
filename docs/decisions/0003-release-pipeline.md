@@ -15,7 +15,7 @@ Release engineering must answer three things at once: how the version number is 
 ## Decision
 
 - **Version-intent SSOT = Conventional Commits**: `fix`→PATCH, `feat`→MINOR, `!`→MAJOR (the precise convention and its enforcement are defined by ADR-0006).
-- **Human gate = release-plz's Release PR**: the machine computes versions, generates the Keep a Changelog CHANGELOG, and runs cargo-semver-checks to flag API breakage; the human only clicks merge. The changelog uses release-plz's built-in git-cliff default template — no separate `cliff.toml` is maintained.
+- **Human gate = release-plz's Release PR**: the machine computes versions, generates the Keep a Changelog CHANGELOG, and runs cargo-semver-checks to flag API breakage; the human only clicks merge. The changelog template lives in `release-plz.toml` (entries grouped by module — the commit scope — so scoped commits write the release notes for free); no separate `cliff.toml` is maintained.
 - **Tag alignment**: `git_tag_name = "v{{ version }}"`; the tag pushed by release-plz triggers cargo-dist's `release.yml` (four-platform artifacts + installers + checksums + attestation). `git_release_enable = false` — the GitHub Release is created by dist, not twice.
 - **Credentials**: crates.io publishing uses OIDC Trusted Publishing (no `CARGO_REGISTRY_TOKEN` in the workflow; the release job holds `id-token: write`); publish manually once, register TP on crates.io, and optionally enable TP-only mode.
 - **Generated-file discipline**: `release.yml` is the output of `dist generate` — committed but never hand-edited; CI enforces it with `just dist-check` (`dist generate --check`). On PRs, dist runs `dist plan` so release-pipeline regressions surface before merge.
