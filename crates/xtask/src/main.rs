@@ -8,6 +8,7 @@
 use std::process::ExitCode;
 
 mod agent_docs;
+mod bump_toolchain;
 mod commit;
 mod new_crate;
 // >>> template-only: the bootstrap subcommand deletes this module and these
@@ -25,6 +26,7 @@ fn main() -> ExitCode {
         "check-commit" => commit::run(&rest),
         "agent-check" => agent_docs::run(&rest),
         "new-crate" => new_crate::run(&rest),
+        "bump-toolchain" => bump_toolchain::run(&rest),
         // >>> template-only
         "init" => init::run(&rest),
         // <<< template-only
@@ -37,7 +39,7 @@ fn main() -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: cargo run -q -p xtask -- <check-commit [FILE] | agent-check | new-crate <name>>"
+        "usage: cargo run -q -p xtask -- <check-commit [FILE] | agent-check | new-crate <name> | bump-toolchain>"
     );
     // >>> template-only: bootstrap subcommand, stripped with the init module
     eprintln!("       template bootstrap: init <name> <owner>");
