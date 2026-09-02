@@ -8,7 +8,6 @@
 
 > 研究基线：2026-08。全书结论均以该时间点前后的公开一手来源（官方仓库、官方文档、论文、标准组织）为依据。
 
-
 ## 1. 总论：贯穿性元原则
 
 本章是全报告的纲领。对 Zed、rust-analyzer、DeepSeek Harness（dsh）、LLVM、uv 等标杆开源仓库十个工程维度的调研表明：那些看似分散的最佳实践——锁文件、代码生成、薄编排层、快照测试、AGENTS.md——可以被少数几条元原则统一解释，且这些原则在彼此独立的生态中被反复、无意识地重新发现。本章给出四条元原则：SSOT 的拓扑结构、自动化的五层栈与"机器准备、人类点闸"的人机分工、架构约束的机械化及其与可测试性的共生、人机双读的仓库观。后续各章（第 2–9 章）是这些原则在仓库组织、环境、自动化、测试、文档、发布、Agent 接入与用户交互等维度上的具体展开；第 10 章将其压缩为三语言速查表与冲突区决策，第 11 章给出按采纳成本排序的落地路线图。
@@ -37,13 +36,13 @@ DRY 常被窄化为"不复制粘贴代码"。调研显示成熟项目治理的�
 
 把环境、任务、钩子、CI、发布五个维度分别独立得出的架构拼在一起，出现一个跨语言通用的五层栈，且各维度对接口契约的描述逐字一致：上层不含业务逻辑，只是下层的调用方——"one runnable source of truth, many callers"[^12^]。
 
-| 层 | 职责 | 载体示例 | 不该出现的东西 |
-|---|---|---|---|
-| ① 工具版本层 | 钉死一切工具与语言版本 | `flake.lock`、`rust-toolchain.toml`、`.python-version` | 任务逻辑、业务命令 |
-| ② 任务层 | 自动化逻辑的唯一实现地 | `justfile`、`cargo xtask`、`uv run`、CMake preset | 版本号（须引用下层） |
-| ③ 钩子层 | 提交前快速质量门 | `.pre-commit-config.yaml` | 测试矩阵、慢检查 |
-| ④ CI 薄编排层 | 触发器、矩阵、权限、缓存 | GitHub Actions YAML（只调单行入口） | 多行 `run:` 业务逻辑 |
-| ⑤ 发布层 | 制品产出与投递 | tag 触发 + 任务层 dist + OIDC Trusted Publishing | 长期凭据、手改 changelog |
+| 层            | 职责                     | 载体示例                                               | 不该出现的东西           |
+| ------------- | ------------------------ | ------------------------------------------------------ | ------------------------ |
+| ① 工具版本层  | 钉死一切工具与语言版本   | `flake.lock`、`rust-toolchain.toml`、`.python-version` | 任务逻辑、业务命令       |
+| ② 任务层      | 自动化逻辑的唯一实现地   | `justfile`、`cargo xtask`、`uv run`、CMake preset      | 版本号（须引用下层）     |
+| ③ 钩子层      | 提交前快速质量门         | `.pre-commit-config.yaml`                              | 测试矩阵、慢检查         |
+| ④ CI 薄编排层 | 触发器、矩阵、权限、缓存 | GitHub Actions YAML（只调单行入口）                    | 多行 `run:` 业务逻辑     |
+| ⑤ 发布层      | 制品产出与投递           | tag 触发 + 任务层 dist + OIDC Trusted Publishing       | 长期凭据、手改 changelog |
 
 这个栈的健康判据是拓扑性的：**每层只消费下层的 SSOT，不被上层重写**。CI 层只跑 `nix develop -c <cmd>`[^13^] 或 `just ci`[^14^]，发布层只调 `cargo xtask dist`[^15^]；于是"CI YAML 里出现多行 `run:`"不再是口味问题，而是可机械判定的层次污染——它意味着任务层存在一份未被消费的影子拷贝。推论同样实用：本地绿 ≡ CI 绿（矩阵维度除外），因为两边跑的是同一份任务定义。新增任何自动化时先问"它属于哪一层"，答案直接决定代码写在哪、被谁调用（各层落地见第 3、4、7 章）。
 
@@ -95,12 +94,12 @@ Python 侧，uv workspace 的根 `tool.uv.sources` 默认对所有成员生效�
 
 C++ 没有统一的官方机制，实践是分层的：`vcpkg.json` 声明依赖、`vcpkg-configuration.json` 用 baseline 锁定整个 registry 的 commit[^49^][^50^]；CPM.cmake 在 `CPMAddPackage` 中钉 git tag/commit 加 `URL_HASH` 完整性校验[^51^]；而 `CMakePresets.json` 承担的是另一维度的 SSOT——把 configure/build/test/workflow 配置全部收敛到一个检入仓库的文件，用 hidden 基座 preset 加 `inherits` 消除重复，`condition` 字段按 `${hostSystemName}` 安置平台差异，README 与 CI 只剩一句 `--preset`[^52^]。
 
-| 生态 | 统一机制 | SSOT 文件 | 统一的对象 | 锁定物 | 已知短板 |
-|---|---|---|---|---|---|
-| Rust | `[workspace.dependencies]` 继承（Cargo ≥1.64） | 根 `Cargo.toml` | 第三方版本、内部 crate 路径、lint 与 package 元数据 | `Cargo.lock` | 无内建"未继承"检查，需 cargo-autoinherit 补齐 |
-| Python | uv workspace + `tool.uv.sources` | 根 `pyproject.toml` | 成员间 editable 依赖、统一 source 覆盖 | `uv.lock`（跨平台单文件） | 不提供依赖隔离，边界需另立工具 |
-| C++ | vcpkg baseline / CPM `GIT_TAG`+`URL_HASH` | `vcpkg-configuration.json` / `CMakeLists.txt` | registry commit 或源码版本 | baseline commit / URL 哈希 | 无官方统一机制，方案需按规模自选 |
-| C++（配置维度） | `CMakePresets.json`（hidden preset + inherits） | 根 `CMakePresets.json` | 编译器、cache 变量、平台条件 | 文件本身检入 git | 只管配置不管依赖版本 |
+| 生态            | 统一机制                                        | SSOT 文件                                     | 统一的对象                                          | 锁定物                     | 已知短板                                      |
+| --------------- | ----------------------------------------------- | --------------------------------------------- | --------------------------------------------------- | -------------------------- | --------------------------------------------- |
+| Rust            | `[workspace.dependencies]` 继承（Cargo ≥1.64）  | 根 `Cargo.toml`                               | 第三方版本、内部 crate 路径、lint 与 package 元数据 | `Cargo.lock`               | 无内建"未继承"检查，需 cargo-autoinherit 补齐 |
+| Python          | uv workspace + `tool.uv.sources`                | 根 `pyproject.toml`                           | 成员间 editable 依赖、统一 source 覆盖              | `uv.lock`（跨平台单文件）  | 不提供依赖隔离，边界需另立工具                |
+| C++             | vcpkg baseline / CPM `GIT_TAG`+`URL_HASH`       | `vcpkg-configuration.json` / `CMakeLists.txt` | registry commit 或源码版本                          | baseline commit / URL 哈希 | 无官方统一机制，方案需按规模自选              |
+| C++（配置维度） | `CMakePresets.json`（hidden preset + inherits） | 根 `CMakePresets.json`                        | 编译器、cache 变量、平台条件                        | 文件本身检入 git           | 只管配置不管依赖版本                          |
 
 **解读**：四个机制共享同一拓扑——声明集中在一处、消费方只允许"引用"形态、解析结果由锁定文件钉死；差异在于统一的完备性。Rust 把依赖、元数据、lint 三维全部纳入继承体系，是三语言中最彻底的；uv 锁定了版本但放弃了隔离，意味着"版本 SSOT"与"边界强制"在 Python 生态是两个独立问题；C++ 的分层现状要求用户自己做出裁决：依赖版本 SSOT（vcpkg baseline 或 CPM）与配置 SSOT（CMakePresets）各选其一并写成团队规则，绝不同时维护两份同构清单。对混合语言仓库，落地的检查项是：任何一个第三方依赖的版本号，在全仓 `grep` 只应命中一个权威位置（manifest），其余命中只能是 lockfile 这类生成物。
 
@@ -226,13 +225,13 @@ Python 侧的对偶结构是 `.python-version` + pyproject.toml 的 `requires-py
 
 C++ 没有官方包管理器，也没有 rust-toolchain.toml 的等价物——编译器与标准库版本由 nixpkgs revision 承载（即 flake.lock），需要特定编译器时在 mkShell 中指定 `stdenv = pkgs.gcc13Stdenv`，或像 Hyprland 那样 `mkShell.override { inherit (pkg) stdenv; }`[^70^]。库依赖则有三条哲学路线，对照如下：
 
-| 方案 | 依赖清单 SSOT | 版本锁定机制 | 原生 Windows | 与 flake 路线的关系 | 适用场景 |
-|---|---|---|---|---|---|
-| nixpkgs（flake buildInputs） | flake.nix | flake.lock（nixpkgs revision） | 无（走 WSL2） | 原生一体，dev/CI 零差异 | Nix 为主力环境的全员 |
-| vcpkg manifest | vcpkg.json + vcpkg-configuration.json | baseline 锁定 registry commit + overrides | 一等公民（MS 官方） | flake 退为仅供编译器/工具 | 必须原生 Windows 构建 |
-| Conan 2 | conanfile.py/.txt + profile | `conan lock` lockfile | 一等公民 | 同上；可生成 CMakePresets | 跨编译配置矩阵复杂的项目 |
-| CPM.cmake | CMakeLists.txt 内 CPMAddPackage | git tag/commit + URL_HASH | 依赖 CMake 本身 | 与 flake 并存但职责重叠 | 小项目、零外部工具诉求 |
-| vendored + pinned（LLVM/Chromium 式） | third_party/ + DEPS 类清单 | 精确 commit hash 检出 | 全平台 | 与 flake 并存 | 超大型项目、需私有补丁 |
+| 方案                                  | 依赖清单 SSOT                         | 版本锁定机制                              | 原生 Windows        | 与 flake 路线的关系       | 适用场景                 |
+| ------------------------------------- | ------------------------------------- | ----------------------------------------- | ------------------- | ------------------------- | ------------------------ |
+| nixpkgs（flake buildInputs）          | flake.nix                             | flake.lock（nixpkgs revision）            | 无（走 WSL2）       | 原生一体，dev/CI 零差异   | Nix 为主力环境的全员     |
+| vcpkg manifest                        | vcpkg.json + vcpkg-configuration.json | baseline 锁定 registry commit + overrides | 一等公民（MS 官方） | flake 退为仅供编译器/工具 | 必须原生 Windows 构建    |
+| Conan 2                               | conanfile.py/.txt + profile           | `conan lock` lockfile                     | 一等公民            | 同上；可生成 CMakePresets | 跨编译配置矩阵复杂的项目 |
+| CPM.cmake                             | CMakeLists.txt 内 CPMAddPackage       | git tag/commit + URL_HASH                 | 依赖 CMake 本身     | 与 flake 并存但职责重叠   | 小项目、零外部工具诉求   |
+| vendored + pinned（LLVM/Chromium 式） | third_party/ + DEPS 类清单            | 精确 commit hash 检出                     | 全平台              | 与 flake 并存             | 超大型项目、需私有补丁   |
 
 这张表的读法比各行内容更重要。**nixpkgs 是 C/C++ 事实上的最大包仓库**，"Nix is to C++ what uv/poetry is to Python"——依赖以 `buildInputs = [ fmt spdlog openssl … ]` 进入 mkShell，cmake 经 find_package/pkg-config 发现它们，dev 与 CI 消费同一份 flake.lock，可复现性最强[^86^]。因此 Nix 为主力环境时首选 nixpkgs；只有需要服务原生 Windows 非 Nix 用户时，才把库依赖清单迁往 vcpkg.json（微软官方推荐 manifest mode，"For most users, we recommend manifest mode"，版本钉定靠 vcpkg-configuration.json 的 baseline commit）[^49^][^50^] 或 conanfile。**铁律是两者取一作为库依赖 SSOT，绝不同时维护 nix 表达式和 conanfile 两份同构清单**——除非受众明确分裂且接受同步成本。表中未展开的两个选项也值得一句定位：Conan 2 的一个生态收敛信号是其输出物选择了 CMake 官方格式——`CMakeToolchain` 直接生成 CMakePresets.json，包管理层与配置层由此共享同一 SSOT[^87^]；CPM.cmake 与 FetchContent 属"源码级获取"路线，单脚本检入、CI 友好，但全源码构建且无版本求解，适合依赖少而简单的小项目[^51^]。至于 vendored+pinned：LLVM 刻意保持零外部 C++ 库依赖、第三方代码 vendor 进 third-party/[^88^][^89^]，Chromium 用 DEPS 按精确 commit 检出并靠自动化 roller 摊薄 deps rolls 成本[^90^]——"规模即能力"，这是大团队特权，中小项目应把同样的钉版本思想降级为 lockfile/baseline/URL_HASH。
 
@@ -294,16 +293,16 @@ xtask = "run --package xtask --"
 
 just 是 Casey Rodarmor 用 Rust 编写的单二进制命令运行器，官方定位清晰："just 是命令运行器，不是构建系统，因此避开了 make 的大部分复杂性与怪癖——不需要 `.PHONY`。"[^100^] 与 make 的本质差异在于：make 追踪文件时间戳做增量重建，just 不追踪任何文件、每次原样执行 recipe——用可预测性换掉了隐式行为。[^101^] 它对混合语言仓库的价值有三：`just --list` 自带出全部 recipe 的活文档；recipe 可用任意 shebang 语言编写；支持 modules/imports 拆分多文件。[^100^] Baserow 的多语言 monorepo 是标杆用法：根、backend（Python/Django + uv）、frontend（Node/Nuxt）三个 justfile 分层组织，CI 与本地共用 `just lint` / `just test` 入口。[^102^]
 
-| 维度 | cargo xtask | just |
-|---|---|---|
-| 定位 | 项目内自动化的完整编程环境 | 语言无关的命令路由与编排门面 |
-| 载体语言 | Rust（宿主语言，类型安全） | justfile DSL + 任意 shebang 语言 |
-| 额外依赖 | 零（仅需 cargo + rustc，自举）[^98^] | 需安装 just 单二进制[^101^] |
-| Windows 支持 | 天然跨平台，不经 shell[^98^] | 需 `set shell := ["powershell.exe", "-c"]` 或 shebang recipe[^103^] |
-| 表达力 | 完整语言：条件、循环、解析、代码生成 | 命令聚合为主；复杂逻辑需下沉 |
-| 自文档 | 依赖 clap 帮助文本 | `just --list` 内建[^100^] |
-| 复用性 | 项目本地，通用逻辑需发库[^98^] | 可 import/module 拆分复用[^100^] |
-| 典型采用者 | rust-analyzer、Cargo、helix、Zed[^98^] | Baserow、dotCMS、Codex[^102^][^95^] |
+| 维度         | cargo xtask                            | just                                                                |
+| ------------ | -------------------------------------- | ------------------------------------------------------------------- |
+| 定位         | 项目内自动化的完整编程环境             | 语言无关的命令路由与编排门面                                        |
+| 载体语言     | Rust（宿主语言，类型安全）             | justfile DSL + 任意 shebang 语言                                    |
+| 额外依赖     | 零（仅需 cargo + rustc，自举）[^98^]   | 需安装 just 单二进制[^101^]                                         |
+| Windows 支持 | 天然跨平台，不经 shell[^98^]           | 需 `set shell := ["powershell.exe", "-c"]` 或 shebang recipe[^103^] |
+| 表达力       | 完整语言：条件、循环、解析、代码生成   | 命令聚合为主；复杂逻辑需下沉                                        |
+| 自文档       | 依赖 clap 帮助文本                     | `just --list` 内建[^100^]                                           |
+| 复用性       | 项目本地，通用逻辑需发库[^98^]         | 可 import/module 拆分复用[^100^]                                    |
+| 典型采用者   | rust-analyzer、Cargo、helix、Zed[^98^] | Baserow、dotCMS、Codex[^102^][^95^]                                 |
 
 对比可见两者的能力曲线在"逻辑复杂度"轴上互补：xtask 在需要条件分支、文件解析、代码生成时优势明显，但为一行命令写一个 Rust 子命令属于过度工程；just 把"谁该被调用"表达得极好，却无法体面地承载重逻辑，且 Windows 下默认 `sh -c` 会失败，必须显式换 shell 或改用 shebang recipe。[^103^] 因此调研给出的裁决原则是分层而非二选一：**justfile 做全仓统一入口（对 Rust/C++/Python 混合仓而言它是唯一语言无关的门面），recipe 体内只调 `cargo xtask …`、`uv run …`、`cmake --preset …`；能用 just 一行表达的别上 xtask，需要条件逻辑或生成能力的别塞进 justfile**。最小落地形态如下：
 
@@ -415,16 +414,16 @@ Zed 同时提供了反面参照：其 `script/` 目录约 90 个 shell 脚本配
 
 下表按"缺陷藏身之处"对照三语言的标准件，按模块特征取用，避免为不需要的维度过度投资。
 
-| 缺陷维度 | Rust | Python | C++ |
-|---|---|---|---|
-| 测试运行器 | cargo-nextest（process-per-test、分片、archive 复用构建产物） | pytest（conftest 注入、parametrize 堆叠） | CTest + `gtest_discover_tests` / `catch_discover_tests` |
-| 单元/断言框架 | 内置 `#[test]` + `assert!` 族 | pytest 断言重写 | GoogleTest（大项目）/ Catch2（中小）/ doctest（编译时间敏感） |
-| 快照断言 | insta（`cargo insta review`） | syrupy（`__snapshots__/` 入库） | 无统治性标准件，golden file 自管或 ApprovalTests |
-| 属性测试 | proptest（`PROPTEST_SEED`、回归文件入库） | hypothesis（失败数据库） | RapidCheck |
-| 类型/编译期契约 | trybuild（compile-fail + `.stderr` 期望） | mypy strict / pyright 进 CI | `static_assert` / concepts + clang-tidy presubmit |
-| 内存/UB 动态检查 | miri（含 `unsafe` 的 crate 开 nightly job） | 解释执行天然免疫；C 扩展走右列方案 | ASan+UBSan（PR lane）、TSan（独立 lane）、MSVC `/fsanitize=address` |
-| 并发交错 | loom（`#[cfg(loom)]` 排列模型检查） | 假时钟 freezegun + 真服务集成测试 | TSan lane 多轮重复 + `rr --chaos` 录制 |
-| 不可信输入 fuzz | cargo-fuzz（libFuzzer）+ OSS-Fuzz | atheris + python/library-fuzzers 独立仓 | libFuzzer `LLVMFuzzerTestOneInput` + OSS-Fuzz/ClusterFuzzLite |
+| 缺陷维度         | Rust                                                          | Python                                    | C++                                                                 |
+| ---------------- | ------------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------- |
+| 测试运行器       | cargo-nextest（process-per-test、分片、archive 复用构建产物） | pytest（conftest 注入、parametrize 堆叠） | CTest + `gtest_discover_tests` / `catch_discover_tests`             |
+| 单元/断言框架    | 内置 `#[test]` + `assert!` 族                                 | pytest 断言重写                           | GoogleTest（大项目）/ Catch2（中小）/ doctest（编译时间敏感）       |
+| 快照断言         | insta（`cargo insta review`）                                 | syrupy（`__snapshots__/` 入库）           | 无统治性标准件，golden file 自管或 ApprovalTests                    |
+| 属性测试         | proptest（`PROPTEST_SEED`、回归文件入库）                     | hypothesis（失败数据库）                  | RapidCheck                                                          |
+| 类型/编译期契约  | trybuild（compile-fail + `.stderr` 期望）                     | mypy strict / pyright 进 CI               | `static_assert` / concepts + clang-tidy presubmit                   |
+| 内存/UB 动态检查 | miri（含 `unsafe` 的 crate 开 nightly job）                   | 解释执行天然免疫；C 扩展走右列方案        | ASan+UBSan（PR lane）、TSan（独立 lane）、MSVC `/fsanitize=address` |
+| 并发交错         | loom（`#[cfg(loom)]` 排列模型检查）                           | 假时钟 freezegun + 真服务集成测试         | TSan lane 多轮重复 + `rr --chaos` 录制                              |
+| 不可信输入 fuzz  | cargo-fuzz（libFuzzer）+ OSS-Fuzz                             | atheris + python/library-fuzzers 独立仓   | libFuzzer `LLVMFuzzerTestOneInput` + OSS-Fuzz/ClusterFuzzLite       |
 
 表格呈现的不是三份孤立清单，而是同一套缺陷分类学在三个生态的投影：每一行回答"这类 bug 用什么抓"。横向可见三条取舍规律。其一，**Rust 的差异化优势在编译期与执行模型**——nextest 的 process-per-test 隔离让单个 panic 不拖垮全套件并更好吸收长尾测试，在 Windows 上收益尤其明显[^145^][^146^]；trybuild 把"应当编译失败"变成可回归断言，是 proc-macro 与类型级不变量的独有武器[^147^]。其二，**C++ 的重型武器集中在动态检查**：sanitizer 矩阵分工（PR lane 跑 ASan+UBSan，TSan 独立 job，禁巨型单 job）是对内存安全缺口的结构性补偿[^148^]，fuzz 契约也极小——一个 `LLVMFuzzerTestOneInput` 函数即接入覆盖率引导 fuzz，纪律是"fuzz 一切处理不可信输入的边界"[^149^][^150^]。其三，**Python 走轻资产路线**——解释执行免疫整类内存 bug，投资应集中在 pytest 组织力（fixture 永不 import、靠 conftest 发现注入）与 hypothesis/syrupy 的断言现代化上[^151^][^152^][^120^]。跨语言 monorepo 的落地顺序：先统一变更感知与三层 CI 拓扑（语言无关收益最大），再按上表逐语言补齐快照与属性测试两格，最后按模块风险画像（unsafe、解析器、并发原语）按需引入 miri/loom/fuzz 等重型件。
 
@@ -438,14 +437,14 @@ Zed 同时提供了反面参照：其 `script/` 目录约 90 个 shell 脚本配
 
 Diátaxis（diataxis.fr，Daniele Procida 创立）是目前最成熟的文档职责划分框架：它识别四类用户需求与对应的四种文档形态——tutorials（教程，面向学习）、how-to guides（操作指南，面向目标）、reference（参考，面向信息）、explanation（解释，面向理解），主张整个文档体系围绕这四种需求组织[^154^]。它的反重复价值在于**每类文档只回答一类问题**：reference 描述机器本身（what is），不含教学步骤；tutorial 带新手完成一次体验，不堆砌完整参数表；explanation 讲背景、理由与权衡（why），不重复 reference 的签名细节。一份文档越界，就同时制造了"同一内容两种表述"的温床。该框架已被 Python、Django、Cloudflare 等数百个文档项目采用[^154^]。
 
-| 文档形态 | 回答的问题 | 写什么（职责内） | 不写什么（职责外） | 防漂移机制 |
-|---|---|---|---|---|
-| README / 门户 | what / why 一句话 / 怎么跑 | 项目定位、安装运行命令、指向各层文档的链接 | 完整参数表、实现细节、设计史 | 示例命令纳入 doctest；版本号注入 |
-| tutorial / how-to | 如何完成一个任务 | 完成特定任务的最短路径 | 穷举参数（引用 reference 即可） | 示例代码进 CI 测试 |
-| reference（API 参考） | 契约是什么 | 签名、类型、参数、错误、行为契约 | 教程、设计理由 | 全部由代码生成，禁止手写 |
-| explanation / 架构文档 | 为什么是这样 | 系统结构、组件关系、关键约束 | 逐函数说明、可从代码读出的现状描述 | 文本图示随代码版本化 |
-| ADR | 当时为什么这样决定 | 单个决策的 context/decision/consequences | 当前状态描述（归架构文档） | 顺序编号、supersede 不删除 |
-| CHANGELOG | 这版变了什么 | 面向用户的逐版本 notable changes | 提交流水账 | 从 conventional commits 生成 |
+| 文档形态               | 回答的问题                 | 写什么（职责内）                           | 不写什么（职责外）                 | 防漂移机制                       |
+| ---------------------- | -------------------------- | ------------------------------------------ | ---------------------------------- | -------------------------------- |
+| README / 门户          | what / why 一句话 / 怎么跑 | 项目定位、安装运行命令、指向各层文档的链接 | 完整参数表、实现细节、设计史       | 示例命令纳入 doctest；版本号注入 |
+| tutorial / how-to      | 如何完成一个任务           | 完成特定任务的最短路径                     | 穷举参数（引用 reference 即可）    | 示例代码进 CI 测试               |
+| reference（API 参考）  | 契约是什么                 | 签名、类型、参数、错误、行为契约           | 教程、设计理由                     | 全部由代码生成，禁止手写         |
+| explanation / 架构文档 | 为什么是这样               | 系统结构、组件关系、关键约束               | 逐函数说明、可从代码读出的现状描述 | 文本图示随代码版本化             |
+| ADR                    | 当时为什么这样决定         | 单个决策的 context/decision/consequences   | 当前状态描述（归架构文档）         | 顺序编号、supersede 不删除       |
+| CHANGELOG              | 这版变了什么               | 面向用户的逐版本 notable changes           | 提交流水账                         | 从 conventional commits 生成     |
 
 这张表的用法是评审判据而非分类学练习：评审任何一段文档时先问"它回答哪类问题"，再问"这个事实的权威位置在哪"。若一段文字回答的是"how is it implemented"，它属于代码与代码注释，不属于任何独立文档——实现细节写进散文就是预定了未来的漂移。判据的另一半是机制列：每种文档形态都配了对应的机械化同步手段，没有任何一格依赖"记得手动更新"。越界即删不是洁癖，而是成本核算——大文档从不被维护，小而职责单一的文档才有被更新的可能。
 
@@ -513,13 +512,13 @@ tag 回答"何时发"，commit message 回答"发多大"。Conventional Commits 
 
 围绕这份"意图 SSOT"，各生态收敛出五个代表工具，差异集中在意图来源与人工闸门两个维度：
 
-| 工具 | 生态 | 版本意图来源 | 人工闸门 | Changelog | 适配场景 |
-|---|---|---|---|---|---|
-| release-please（Google） | 多语言 | Conventional Commits | Release PR（合并才发版） | 自动生成 | 多语言 monorepo，按 package 配多组件[^16^] |
-| release-plz | Rust | Conventional Commits | Release PR | git-cliff 驱动 | 集成 cargo-semver-checks 标注 API 破坏；内置 crates.io Trusted Publishing[^166^][^179^] |
-| changesets | JS（思想可移植） | 显式 changeset 文件（人写） | "Version Packages" PR | 人写条目，质量最高 | monorepo 多包协调；追求"版本 bump 永不意外"[^180^] |
-| semantic-release | JS | Conventional Commits | 无（全自动） | 自动生成 | 迭代极快、下游容忍度高的工具链[^181^] |
-| git-cliff | 语言无关 CLI | Conventional Commits + 自定义 parser | 由调用方决定 | 模板高度可定制 | 只需 changelog/版本推导的单 Rust 二进制，可嵌入任意 CI[^3^] |
+| 工具                     | 生态             | 版本意图来源                         | 人工闸门                 | Changelog          | 适配场景                                                                                |
+| ------------------------ | ---------------- | ------------------------------------ | ------------------------ | ------------------ | --------------------------------------------------------------------------------------- |
+| release-please（Google） | 多语言           | Conventional Commits                 | Release PR（合并才发版） | 自动生成           | 多语言 monorepo，按 package 配多组件[^16^]                                              |
+| release-plz              | Rust             | Conventional Commits                 | Release PR               | git-cliff 驱动     | 集成 cargo-semver-checks 标注 API 破坏；内置 crates.io Trusted Publishing[^166^][^179^] |
+| changesets               | JS（思想可移植） | 显式 changeset 文件（人写）          | "Version Packages" PR    | 人写条目，质量最高 | monorepo 多包协调；追求"版本 bump 永不意外"[^180^]                                      |
+| semantic-release         | JS               | Conventional Commits                 | 无（全自动）             | 自动生成           | 迭代极快、下游容忍度高的工具链[^181^]                                                   |
+| git-cliff                | 语言无关 CLI     | Conventional Commits + 自定义 parser | 由调用方决定             | 模板高度可定制     | 只需 changelog/版本推导的单 Rust 二进制，可嵌入任意 CI[^3^]                             |
 
 这张表呈现的是一条哲学光谱而非优劣排名。左端 semantic-release 追求零摩擦全自动，代价是放弃可审计的发布决策点；右端 changesets 用一份手写意图文件换取 changelog 质量与"版本 bump 永不意外"。多方独立收敛的平衡点是 **Release PR**：机器准备好版本号、changelog、tag 计划，人类只点 merge——自动化与可审计兼得，这正是"全自动 vs 人闸 vs 本地命令式"之争（semantic-release / release-plz / cargo-release 三派）在实践中被多数项目采纳的折中[^16^][^166^]。对混合语言项目的落地建议：Rust 侧用 release-plz（顺带获得 cargo-semver-checks 对公共 API 破坏的机械校验，245+ 条 lint 且在并入 cargo 官方的路线图上[^182^][^183^]），Python/C++ 侧用 release-please 的多组件模式，changelog 模板统一用 git-cliff 格式。
 
@@ -582,14 +581,14 @@ AGENTS.md 是仓库根目录下的纯 Markdown 文件，官方定位为 "README 
 
 各工具的原生指令文件尚未完全统一到 AGENTS.md，多工具并存的项目面临的第一性问题不是"用哪个"，而是"事实写在哪一份"。现状与桥接方式如下：
 
-| 工具 | 原生指令文件 | 对 AGENTS.md 的支持 | 推荐桥接方式 |
-|---|---|---|---|
-| OpenAI Codex | AGENTS.md / AGENTS.override.md | 原生 | 无需桥接[^34^] |
-| GitHub Copilot | .github/copilot-instructions.md 及 .github/instructions/*.instructions.md | 官方文档明确支持，目录树就近优先 | symlink 或一行引用指向 AGENTS.md[^205^][^206^][^207^] |
-| Cursor | .cursor/rules/*.mdc | 可读；.cursorrules 已废弃，官方建议迁往 AGENTS.md | 直接采用 AGENTS.md，路径规则留 .mdc[^203^][^208^] |
-| Claude Code | CLAUDE.md | 不原生读取 | CLAUDE.md 内一行 `@AGENTS.md` import，或 symlink[^5^][^209^] |
-| Gemini CLI | GEMINI.md | 需配置 `"context": {"fileName": "AGENTS.md"}` | 配置指向同一文件[^34^] |
-| Aider | 无默认 | `.aider.conf.yml` 加 `read: AGENTS.md` | 配置指向同一文件[^34^] |
+| 工具           | 原生指令文件                                                              | 对 AGENTS.md 的支持                               | 推荐桥接方式                                                 |
+| -------------- | ------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------ |
+| OpenAI Codex   | AGENTS.md / AGENTS.override.md                                            | 原生                                              | 无需桥接[^34^]                                               |
+| GitHub Copilot | .github/copilot-instructions.md 及 .github/instructions/*.instructions.md | 官方文档明确支持，目录树就近优先                  | symlink 或一行引用指向 AGENTS.md[^205^][^206^][^207^]        |
+| Cursor         | .cursor/rules/*.mdc                                                       | 可读；.cursorrules 已废弃，官方建议迁往 AGENTS.md | 直接采用 AGENTS.md，路径规则留 .mdc[^203^][^208^]            |
+| Claude Code    | CLAUDE.md                                                                 | 不原生读取                                        | CLAUDE.md 内一行 `@AGENTS.md` import，或 symlink[^5^][^209^] |
+| Gemini CLI     | GEMINI.md                                                                 | 需配置 `"context": {"fileName": "AGENTS.md"}`     | 配置指向同一文件[^34^]                                       |
+| Aider          | 无默认                                                                    | `.aider.conf.yml` 加 `read: AGENTS.md`            | 配置指向同一文件[^34^]                                       |
 
 表中三种桥接形态——import、symlink、配置指向——共享同一拓扑：AGENTS.md 是唯一权威位置，其余文件只是引用，不存在第二份内容拷贝，漂移在结构上不可能发生[^5^][^210^]。该模式已被顶级项目验证：Next.js 的 AGENTS.md 开篇即声明 "`CLAUDE.md` is a symlink to `AGENTS.md`. They are the same file."[^211^]；dsh（DeepSeek Harness）同样将 CLAUDE.md symlink 到根 AGENTS.md[^27^]。反面教训同样明确：SSW 把"CLAUDE.md 手工维护为 AGENTS.md 副本"列为反面示例，因为手工同步的副本必然漂移并导致 agent 行为不一致[^212^]。落地结论只有一条：symlink 在 Windows 上需 `core.symlinks=true` 或开发者模式[^5^][^212^]，团队有原生 Windows 成员时退而用 `@AGENTS.md` import 或一行引用——三种形态任选，唯独不许复制内容。对真实仓库的观察研究确认，成熟仓库的 context file 之间普遍采用"仅引用"写法（直接指针、短引用加上下文、摘要加引用三式）[^203^]。
 
@@ -607,22 +606,27 @@ AGENTS.md 是仓库根目录下的纯 Markdown 文件，官方定位为 "README 
 
 ```markdown
 # AGENTS.md
+
 <!-- 时效声明：命令节随 justfile 变更而更新；最近审查 2026-08 -->
 
 ## 命令（唯一入口：just，禁止绕过）
+
 - 全量检查：`just ci`（本地绿 ≡ CI 绿）
 - 单测试：Rust `cargo nextest run -p <crate> <name>`；Python `uv run pytest path::test -xvs`；C++ `ctest --preset dev -R <name>`
 - Lint/类型：`just lint`（clippy + ruff + clang-tidy，<15s 增量）
 
 ## 环境
+
 - 工具链由 flake.nix 提供；先 `direnv allow`。沙箱内网络禁用，凡需网络的测试已标记早退，勿"修复"它们。
 
 ## 禁令（NEVER）
+
 - NEVER 直接调 pytest/cargo/cmake，一律经 just 入口（原因：入口注入种子与超时参数，绕过则测试不可复现；由 CI `just ci` 强制）。
 - NEVER 手改 uv.lock / Cargo.lock / 生成物（`git diff --exit-code` 门禁）。
 - ASK 后再动：新增依赖、数据库迁移、`.github/` 下任何文件。
 
 ## 风格（lint 管不到的部分）
+
 - 时间/随机/IO 一律构造参数注入，禁止隐藏调用 `now()`/`rand()`（原因：测试确定性；loom/proptest 基建依赖此 seam）。
 ```
 
@@ -660,14 +664,14 @@ AGENTS.md 是仓库根目录下的纯 Markdown 文件，官方定位为 "README 
 
 clig.dev（Command Line Interface Guidelines）是社区维护的开源 CLI 设计指南，其原则不绑定任何语言或框架，已被广泛引用为事实标准[^231^]。与本章相关的核心条目可归纳为六组：
 
-| 维度 | 原则 | 落地要点 |
-|---|---|---|
-| 输出分工 | 程序输出走 stdout，诊断与进度消息走 stderr | stdout 内容可被管道消费；重定向后 stderr 仍对人可读[^231^] |
-| 退出码 | 成功返回 0，失败非 0 | 进阶做法是给退出码分段赋语义，如 Square 的 80–99 表用户错误、100–119 表软件内部错误，使告警系统可按码区分责任方[^233^] |
-| 机器可读 | 人类可读为默认，`--json` 提供结构化输出 | 非 TTY 时禁用颜色与动画，尊重 `NO_COLOR`；一切人类输出先考虑管道场景[^231^] |
-| Help 自文档化 | 无参数、`-h`/`--help` 必须显示帮助；以示例开头 | 期待管道输入但 stdin 是 TTY 时直接显示帮助；猜测并提示用户可能想输入的命令[^231^] |
-| 错误 | 捕获底层错误并重写为面向人类的信息 | 信噪比至上；不可解释的错误给调试信息与提交 bug 的指引[^231^][^232^] |
-| 演进与健壮 | 变更尽量 additive，破坏前警告 | 危险操作需确认；secret 不从 flag 读（会进 shell 历史）；长任务显示进度[^231^] |
+| 维度          | 原则                                           | 落地要点                                                                                                               |
+| ------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 输出分工      | 程序输出走 stdout，诊断与进度消息走 stderr     | stdout 内容可被管道消费；重定向后 stderr 仍对人可读[^231^]                                                             |
+| 退出码        | 成功返回 0，失败非 0                           | 进阶做法是给退出码分段赋语义，如 Square 的 80–99 表用户错误、100–119 表软件内部错误，使告警系统可按码区分责任方[^233^] |
+| 机器可读      | 人类可读为默认，`--json` 提供结构化输出        | 非 TTY 时禁用颜色与动画，尊重 `NO_COLOR`；一切人类输出先考虑管道场景[^231^]                                            |
+| Help 自文档化 | 无参数、`-h`/`--help` 必须显示帮助；以示例开头 | 期待管道输入但 stdin 是 TTY 时直接显示帮助；猜测并提示用户可能想输入的命令[^231^]                                      |
+| 错误          | 捕获底层错误并重写为面向人类的信息             | 信噪比至上；不可解释的错误给调试信息与提交 bug 的指引[^231^][^232^]                                                    |
+| 演进与健壮    | 变更尽量 additive，破坏前警告                  | 危险操作需确认；secret 不从 flag 读（会进 shell 历史）；长任务显示进度[^231^]                                          |
 
 这六组原则的共同逻辑是"把 CLI 当作有消费者的 API"：stdout 是给下游程序的数据通道，stderr 与退出码是给人类和自动化系统的控制通道，两者混用会同时破坏两种消费者。退出码分段是其中最容易被低估的一条——当工具进入 CI 或脚本后，"失败"不再是二元事件，调用方需要区分"用户输错参数"与"工具自身崩溃"以决定是否重试、告警谁。`--json` 与 `NO_COLOR` 则承认 CLI 的运行环境是不可控的：同一命令可能运行在个人终端、CI 日志、IDE 内嵌终端中，输出格式必须由环境探测与显式 flag 共同决定，而非硬编码。
 
@@ -707,21 +711,21 @@ Agent 工具在 CLI 规范之上引入了新问题：程序不再一次性输出
 
 #### 10.1.1 workspace.dependencies + workspace.lints + nextest + insta + release-plz + cargo-dist 工具栈速查表
 
-| 工程维度 | 推荐工具/机制 | SSOT 位置 | 详见 |
-|---|---|---|---|
-| 骨架与布局 | 根虚拟清单 + `crates/*` 扁平布局，目录名 == crate 名；要发布的 crate 单独放 `libs/`[^43^] | 根 `Cargo.toml` | §2.1 |
-| 依赖版本统一 | `[workspace.dependencies]` 声明一次，成员 `workspace = true` 继承[^2^][^15^] | 根 `Cargo.toml` | §2.1 |
-| lint 政策 | `[workspace.lints]` 统一 clippy/rust lint，成员 `[lints] workspace = true`；CI `clippy --all-targets -- -D warnings`[^243^] | 根 `Cargo.toml` | §2.1 |
-| 工具链版本 | rustup 与 flake 双消费同一文件（rust-bin.fromRustupToolchainFile）[^6^] | `rust-toolchain.toml` | §3.2 |
-| 任务层 | 自动化全部写进 `cargo xtask`，消灭零散 shell/Makefile[^97^] | `xtask/` crate | §4.2 |
-| 测试运行器 | cargo-nextest（process-per-test，Windows 收益尤其大；分片 `--partition slice:m/n`、归档复用构建产物）[^145^][^146^][^244^] | `.config/nextest.toml` | §5.4 |
-| 大输出断言 | insta 快照 + `cargo insta review` 人工批准；CI 只读[^10^] | `*.snap`（入库评审） | §5.2 |
-| 编译期/UB 兜底 | trybuild（compile-fail）、miri（unsafe crate 开 nightly job）、loom（并发原语）[^147^][^245^][^31^] | `tests/ui/`、CI job | §5.4 |
-| 依赖政策 | cargo-deny 四检查：advisories/licenses/bans/sources[^246^] | `deny.toml` | — |
-| API 破坏防线 | cargo-semver-checks（仅 2025 年就新增 122 条 lint，发布前必跑）[^58^] | CI 配置 | §2.2 |
-| 发布自动化 | release-plz 开 Release PR（人点 merge），二进制配 cargo-dist 出跨平台安装器[^17^][^196^] | `release-plz.toml`、`dist-workspace.toml` | §7.1 |
-| 可信凭据 | crates.io Trusted Publishing（OIDC），删除长期 token，可开 TP-only 模式[^187^][^188^] | workflow `permissions` | §7.2 |
-| CI 缓存 | Swatinem/rust-cache，key 按 lockfile/toolchain/target 自动隔离[^144^] | workflow | §5.4 |
+| 工程维度       | 推荐工具/机制                                                                                                               | SSOT 位置                                 | 详见 |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | ---- |
+| 骨架与布局     | 根虚拟清单 + `crates/*` 扁平布局，目录名 == crate 名；要发布的 crate 单独放 `libs/`[^43^]                                   | 根 `Cargo.toml`                           | §2.1 |
+| 依赖版本统一   | `[workspace.dependencies]` 声明一次，成员 `workspace = true` 继承[^2^][^15^]                                                | 根 `Cargo.toml`                           | §2.1 |
+| lint 政策      | `[workspace.lints]` 统一 clippy/rust lint，成员 `[lints] workspace = true`；CI `clippy --all-targets -- -D warnings`[^243^] | 根 `Cargo.toml`                           | §2.1 |
+| 工具链版本     | rustup 与 flake 双消费同一文件（rust-bin.fromRustupToolchainFile）[^6^]                                                     | `rust-toolchain.toml`                     | §3.2 |
+| 任务层         | 自动化全部写进 `cargo xtask`，消灭零散 shell/Makefile[^97^]                                                                 | `xtask/` crate                            | §4.2 |
+| 测试运行器     | cargo-nextest（process-per-test，Windows 收益尤其大；分片 `--partition slice:m/n`、归档复用构建产物）[^145^][^146^][^244^]  | `.config/nextest.toml`                    | §5.4 |
+| 大输出断言     | insta 快照 + `cargo insta review` 人工批准；CI 只读[^10^]                                                                   | `*.snap`（入库评审）                      | §5.2 |
+| 编译期/UB 兜底 | trybuild（compile-fail）、miri（unsafe crate 开 nightly job）、loom（并发原语）[^147^][^245^][^31^]                         | `tests/ui/`、CI job                       | §5.4 |
+| 依赖政策       | cargo-deny 四检查：advisories/licenses/bans/sources[^246^]                                                                  | `deny.toml`                               | —    |
+| API 破坏防线   | cargo-semver-checks（仅 2025 年就新增 122 条 lint，发布前必跑）[^58^]                                                       | CI 配置                                   | §2.2 |
+| 发布自动化     | release-plz 开 Release PR（人点 merge），二进制配 cargo-dist 出跨平台安装器[^17^][^196^]                                    | `release-plz.toml`、`dist-workspace.toml` | §7.1 |
+| 可信凭据       | crates.io Trusted Publishing（OIDC），删除长期 token，可开 TP-only 模式[^187^][^188^]                                       | workflow `permissions`                    | §7.2 |
+| CI 缓存        | Swatinem/rust-cache，key 按 lockfile/toolchain/target 自动隔离[^144^]                                                       | workflow                                  | §5.4 |
 
 这张表的主线是**根 `Cargo.toml` 一个文件承担三种 SSOT 角色**：依赖版本、包元数据、lint 政策全部以 workspace 级表声明、成员继承的方式收敛，继承语义只允许追加 `features`/`optional`、不允许覆盖版本，从机制上杜绝了"成员私自改版本"的漂移路径[^15^]。测试侧的选型逻辑是"执行模型优先"：nextest 的 process-per-test 不只是提速，更带来故障隔离与 CI 分片/归档两项结构化能力，这是它取代 `cargo test` 成为默认的真正原因[^146^][^244^]。发布侧三件套（release-plz + cargo-dist + Trusted Publishing）共享同一条纪律——机器准备、人点闸门、凭据分钟级存活；首次发布必须手动（Trusted Publisher 只能绑定已存在 crate），这是唯一允许的人工例外[^187^]。cargo-hakari（workspace-hack 统一 feature 解析，累计提速约 1.7x）未列入默认栈：只有 workspace 膨胀到构建时间成为瓶颈时才值得引入，且发布到 crates.io 需特殊处理[^247^]。
 
@@ -729,21 +733,21 @@ Agent 工具在 CLI 规范之上引入了新问题：程序不再一次性输出
 
 #### 10.2.1 pyproject.toml SSOT + uv workspace + ruff + pytest + Trusted Publishing 工具栈速查表
 
-| 工程维度 | 推荐工具/机制 | SSOT 位置 | 详见 |
-|---|---|---|---|
-| 骨架与配置 | PEP 621 `[project]` + 全部 `[tool.*]` 集中；src layout + `tests/` 在 src 之外[^248^][^249^][^250^] | `pyproject.toml` | §2.1 |
-| monorepo | uv workspace + `[tool.uv.sources]`，成员间依赖自动 editable；requires-python 取交集、无依赖隔离[^45^] | 根 `pyproject.toml` | §2.1 |
-| 依赖锁定 | uv.lock 为 universal lockfile（单文件跨平台），必须提交、绝不手改；CI `uv sync --locked` 防漂移，部署用 `--frozen`[^80^] | `uv.lock` | §3.1 |
-| 统一执行器 | 一切命令经 `uv run`（本地/CI/任务文件同一入口）[^251^][^252^] | justfile | §4.2 |
-| 依赖分组 | 运行时 extras → `[project.optional-dependencies]`；开发依赖 → PEP 735 `[dependency-groups]`，同一依赖只出现一次[^253^] | `pyproject.toml` | — |
-| lint/格式化 | ruff 一家替代 black+isort+flake8+pyupgrade；`select` 显式声明规则集[^250^] | `[tool.ruff]` | §4.3 |
-| 类型检查 | 编辑器用 ty（快 10–60x），CI 用 mypy `strict = true` 或 pyright（符合度：pyright 96.8%、pyrefly 97.9%，均高于 ty 的 86.5%）[^254^][^255^][^256^] | `[tool.mypy]` 等 | §5.4 |
-| 测试框架 | pytest：fixture 只放 conftest 靠发现注入、永不 import fixture；parametrize 堆叠代替重复函数[^151^][^152^] | `[tool.pytest.ini_options]` | §5.4 |
-| 断言补强 | syrupy 快照（`__snapshots__/` 必提交）+ hypothesis 属性测试（roundtrip/不变量/幂等）[^128^][^120^] | `__snapshots__/` | §5.2 |
-| 覆盖率门 | `[tool.coverage.run] branch = true` + `fail_under` 只写 pyproject，CLI 不重复传阈值[^116^][^117^] | `[tool.coverage.*]` | §5.1 |
-| 版本矩阵 | nox + `nox.project.python_versions()` 从 pyproject 读矩阵，或纯 CI matrix——只定义一次[^257^] | `noxfile.py` 或 workflow | — |
-| 发布自动化 | conventional commits → release-please 管 CHANGELOG/tag；注意 uv_build 后端不支持 dynamic version，tag 推导需换 hatchling + uv-dynamic-versioning[^177^][^18^][^258^] | `release-please-config.json` | §7.1 |
-| 可信凭据 | tag 触发 + 双 job（build 无凭据 / publish `id-token: write`），PyPI Trusted Publishing 零 token[^191^][^259^] | workflow `permissions` | §7.2 |
+| 工程维度    | 推荐工具/机制                                                                                                                                                        | SSOT 位置                    | 详见 |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ---- |
+| 骨架与配置  | PEP 621 `[project]` + 全部 `[tool.*]` 集中；src layout + `tests/` 在 src 之外[^248^][^249^][^250^]                                                                   | `pyproject.toml`             | §2.1 |
+| monorepo    | uv workspace + `[tool.uv.sources]`，成员间依赖自动 editable；requires-python 取交集、无依赖隔离[^45^]                                                                | 根 `pyproject.toml`          | §2.1 |
+| 依赖锁定    | uv.lock 为 universal lockfile（单文件跨平台），必须提交、绝不手改；CI `uv sync --locked` 防漂移，部署用 `--frozen`[^80^]                                             | `uv.lock`                    | §3.1 |
+| 统一执行器  | 一切命令经 `uv run`（本地/CI/任务文件同一入口）[^251^][^252^]                                                                                                        | justfile                     | §4.2 |
+| 依赖分组    | 运行时 extras → `[project.optional-dependencies]`；开发依赖 → PEP 735 `[dependency-groups]`，同一依赖只出现一次[^253^]                                               | `pyproject.toml`             | —    |
+| lint/格式化 | ruff 一家替代 black+isort+flake8+pyupgrade；`select` 显式声明规则集[^250^]                                                                                           | `[tool.ruff]`                | §4.3 |
+| 类型检查    | 编辑器用 ty（快 10–60x），CI 用 mypy `strict = true` 或 pyright（符合度：pyright 96.8%、pyrefly 97.9%，均高于 ty 的 86.5%）[^254^][^255^][^256^]                     | `[tool.mypy]` 等             | §5.4 |
+| 测试框架    | pytest：fixture 只放 conftest 靠发现注入、永不 import fixture；parametrize 堆叠代替重复函数[^151^][^152^]                                                            | `[tool.pytest.ini_options]`  | §5.4 |
+| 断言补强    | syrupy 快照（`__snapshots__/` 必提交）+ hypothesis 属性测试（roundtrip/不变量/幂等）[^128^][^120^]                                                                   | `__snapshots__/`             | §5.2 |
+| 覆盖率门    | `[tool.coverage.run] branch = true` + `fail_under` 只写 pyproject，CLI 不重复传阈值[^116^][^117^]                                                                    | `[tool.coverage.*]`          | §5.1 |
+| 版本矩阵    | nox + `nox.project.python_versions()` 从 pyproject 读矩阵，或纯 CI matrix——只定义一次[^257^]                                                                         | `noxfile.py` 或 workflow     | —    |
+| 发布自动化  | conventional commits → release-please 管 CHANGELOG/tag；注意 uv_build 后端不支持 dynamic version，tag 推导需换 hatchling + uv-dynamic-versioning[^177^][^18^][^258^] | `release-please-config.json` | §7.1 |
+| 可信凭据    | tag 触发 + 双 job（build 无凭据 / publish `id-token: write`），PyPI Trusted Publishing 零 token[^191^][^259^]                                                        | workflow `permissions`       | §7.2 |
 
 Python 栈的收敛度是三语言中最高的：`pyproject.toml` 同时是包元数据、依赖声明与多家工具的配置中心，SSOT 纪律具体化为两条可执行规则——覆盖率阈值只写 `[tool.coverage.report]` 不在 CLI 重复[^117^]，同一依赖不在 extras 与 dependency-groups 出现两次（canvas-mcp 项目曾因两处定义 dev 依赖且版本偏移而付出调试成本，这是"重复即腐烂"的直接实证）[^260^]。类型检查是表中唯一的"双工具"格：性能与规范符合度在 2025–2026 年呈反向分布（ty 快 10–60 倍但符合度 86.5%，pyright 96.8%），因此编辑器/CI 分工是当前最优折中，但各家抑制注释语法不同，多检查器并行要付出维护成本，beta 格局稳定后应回到单一检查器[^254^]。发布侧的陷阱在构建后端：`uv_build` 要求静态版本、拒绝 `dynamic = ["version"]`，要 tag 推导版本就必须换 hatchling——这个限制决定了"版本 SSOT 是 tag 还是 pyproject"的架构选择题[^177^]。
 
@@ -751,20 +755,20 @@ Python 栈的收敛度是三语言中最高的：`pyproject.toml` 同时是包�
 
 #### 10.3.1 CMakePresets.json SSOT + nixpkgs/vcpkg + GTest + sanitizer 矩阵 + clang-tidy 检入工具栈速查表
 
-| 工程维度 | 推荐工具/机制 | SSOT 位置 | 详见 |
-|---|---|---|---|
-| 配置中心 | CMakePresets.json 检入为 SSOT（hidden 基座 + inherits 消重 + condition 分平台）；CMakeUserPresets.json 进 .gitignore；CI 每格只调一个 `--preset`[^52^] | `CMakePresets.json` | §2.1 |
-| 构建纪律 | 一切 target 化并显式 PUBLIC/PRIVATE/INTERFACE；禁全局命令；影响 ABI 的选项全局统一[^26^][^59^] | `CMakeLists.txt` | §2.2 |
-| 依赖管理 | flake 环境首选 nixpkgs；需服务原生 Windows 非 Nix 用户时迁 vcpkg manifest（baseline 锁 registry commit）；中小项目备选 CPM（GIT_TAG + URL_HASH）[^49^][^50^][^51^] | `flake.nix` 或 `vcpkg.json`（二选一） | §3.3 |
-| 测试框架 | 大项目 GoogleTest、中小 Catch2/doctest；`gtest/catch_discover_tests` 接入 CTest，交叉编译设 `DISCOVERY_MODE PRE_TEST`[^261^][^262^][^263^] | `CMakeLists.txt` + test preset | §5.4 |
-| 内存/UB 防线 | sanitizer 矩阵写进 presets：PR lane = ASan+UBSan、独立 TSan lane、禁巨型单 job[^148^] | `CMakePresets.json` | §5.4 |
-| 不可信输入 | libFuzzer harness（`LLVMFuzzerTestOneInput`）；够格接 OSS-Fuzz，否则 ClusterFuzzLite 进自家 CI[^149^][^150^][^264^] | `fuzz/` + CI | §5.4 |
-| 代码规范 | `.clang-format`/`.clang-tidy` 检入仓库根；CI 用 clang-tidy-diff 只查增量，新 check 渐进启用[^265^][^266^] | `.clang-format`、`.clang-tidy` | §4.3 |
-| 编译缓存 | ccache/sccache 经 `CMAKE_*_COMPILER_LAUNCHER` 接线，缓存 key 按 matrix 维度隔离；Windows 优先 sccache[^143^][^267^] | preset `cacheVariables` | §5.4 |
-| 工具链枢纽 | `CMAKE_EXPORT_COMPILE_COMMANDS=ON` 写入 preset；compile_commands.json 喂 clangd/clang-tidy/IWYU/include-cleaner[^268^] | preset `cacheVariables` | §2.2 |
-| 模块边界 | 目录即库、"假想 Unix 链接器"自测分层；clang-tidy `misc-include-cleaner` 进 presubmit[^24^][^55^] | `CMakeLists.txt` 依赖声明 | §2.2 |
-| 版本政策 | API/ABI 双轨明文化：abseil 式"不承诺 ABI"或 soname/SOVERSION 纪律；依赖版本全局唯一防菱形 ODR[^59^][^269^] | `project(VERSION)` + 文档 | §7.1 |
-| 库分发 | 编译版 + header-only 双 target（fmt 模式）；先做好 `find_package` 包配置，vcpkg/Conan/CPM 五路自然可用[^198^] | `CMakeLists.txt` | §7.3 |
+| 工程维度     | 推荐工具/机制                                                                                                                                                      | SSOT 位置                             | 详见 |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------- | ---- |
+| 配置中心     | CMakePresets.json 检入为 SSOT（hidden 基座 + inherits 消重 + condition 分平台）；CMakeUserPresets.json 进 .gitignore；CI 每格只调一个 `--preset`[^52^]             | `CMakePresets.json`                   | §2.1 |
+| 构建纪律     | 一切 target 化并显式 PUBLIC/PRIVATE/INTERFACE；禁全局命令；影响 ABI 的选项全局统一[^26^][^59^]                                                                     | `CMakeLists.txt`                      | §2.2 |
+| 依赖管理     | flake 环境首选 nixpkgs；需服务原生 Windows 非 Nix 用户时迁 vcpkg manifest（baseline 锁 registry commit）；中小项目备选 CPM（GIT_TAG + URL_HASH）[^49^][^50^][^51^] | `flake.nix` 或 `vcpkg.json`（二选一） | §3.3 |
+| 测试框架     | 大项目 GoogleTest、中小 Catch2/doctest；`gtest/catch_discover_tests` 接入 CTest，交叉编译设 `DISCOVERY_MODE PRE_TEST`[^261^][^262^][^263^]                         | `CMakeLists.txt` + test preset        | §5.4 |
+| 内存/UB 防线 | sanitizer 矩阵写进 presets：PR lane = ASan+UBSan、独立 TSan lane、禁巨型单 job[^148^]                                                                              | `CMakePresets.json`                   | §5.4 |
+| 不可信输入   | libFuzzer harness（`LLVMFuzzerTestOneInput`）；够格接 OSS-Fuzz，否则 ClusterFuzzLite 进自家 CI[^149^][^150^][^264^]                                                | `fuzz/` + CI                          | §5.4 |
+| 代码规范     | `.clang-format`/`.clang-tidy` 检入仓库根；CI 用 clang-tidy-diff 只查增量，新 check 渐进启用[^265^][^266^]                                                          | `.clang-format`、`.clang-tidy`        | §4.3 |
+| 编译缓存     | ccache/sccache 经 `CMAKE_*_COMPILER_LAUNCHER` 接线，缓存 key 按 matrix 维度隔离；Windows 优先 sccache[^143^][^267^]                                                | preset `cacheVariables`               | §5.4 |
+| 工具链枢纽   | `CMAKE_EXPORT_COMPILE_COMMANDS=ON` 写入 preset；compile_commands.json 喂 clangd/clang-tidy/IWYU/include-cleaner[^268^]                                             | preset `cacheVariables`               | §2.2 |
+| 模块边界     | 目录即库、"假想 Unix 链接器"自测分层；clang-tidy `misc-include-cleaner` 进 presubmit[^24^][^55^]                                                                   | `CMakeLists.txt` 依赖声明             | §2.2 |
+| 版本政策     | API/ABI 双轨明文化：abseil 式"不承诺 ABI"或 soname/SOVERSION 纪律；依赖版本全局唯一防菱形 ODR[^59^][^269^]                                                         | `project(VERSION)` + 文档             | §7.1 |
+| 库分发       | 编译版 + header-only 双 target（fmt 模式）；先做好 `find_package` 包配置，vcpkg/Conan/CPM 五路自然可用[^198^]                                                      | `CMakeLists.txt`                      | §7.3 |
 
 C++ 栈与其他两栈的最大差异是**不存在官方包管理器**，因此"SSOT 文件链"在这里是多段拼接：flake.nix 管工具链供给、CMakePresets.json 管项目配置、vcpkg.json（或 nixpkgs）管库依赖、`.clang-*` 管代码规范——四者各为单一事实源、职责正交零重叠，这正是 LLVM 与 Conan 2 都把 CMakePresets 选作交接面的原因[^52^][^87^]。依赖一格的"二选一"不是偷懒：跨维度交叉验证的裁决明确"两者取一作为库依赖 SSOT，绝不同时维护两份同构清单"，Nix 主力路线用 nixpkgs，原生 Windows 刚需才迁 vcpkg[^49^][^51^]。sanitizer 矩阵的分 lane 设计是对"慢而被忽略"这一失败模式的直接回应——一个又慢又 flaky 的巨型 sanitized job 等于没有 sanitizer[^148^]。ABI 一栏提醒：C++ 的 semver 必须拆成 API 与 ABI 两个维度，选 abseil 式源码同构还是 soname 式 ABI 版本纪律，必须在文档里写死，否则菱形依赖会在链接期以 ODR 违反的形式讨债[^59^]。
 
@@ -774,20 +778,20 @@ C++ 栈与其他两栈的最大差异是**不存在官方包管理器**，因此
 
 速查表给的是无争议的默认栈；以下 12 个选择点在标杆项目间存在真实分歧，跨维度交叉验证的结论是一致的——**分歧几乎都可通过"场景分层"调和**，下表按触发场景给出裁决：
 
-| # | 冲突区 | 各方主张 | 按场景的裁决 | 详见 |
-|---|---|---|---|---|
-| C1 | 任务层载体 | xtask 派（类型安全、消 YAML 重复）[^97^]；just 派（语言无关、`--list` 即活文档）[^223^] | 分层不互斥：混合仓 justfile 做总入口，需条件逻辑/生成/解析的下沉 xtask；纯 Rust 单仓 xtask 自足；Windows 重逻辑避开 shell 用 xtask | §4.2 |
-| C2 | 测试形状 | Trophy/集成优先[^112^]；金字塔单元基座[^115^]；覆盖率门（100% 死代码探测 vs fail_under=80 防退化）[^61^][^117^] | 形状是架构的函数：纯逻辑→金字塔、应用→trophy、微服务→honeycomb；库代码取"未覆盖即删"、应用取 80% 底线 | §5.1 |
-| C3 | C++ 依赖 | vendored/pinned（LLVM/Chromium）；包管理器（vcpkg/Conan/CPM）；nixpkgs[^88^][^90^][^49^] | Nix 环境首选 nixpkgs；原生 Windows 刚需迁 vcpkg.json 为 SSOT；deps rolls 是大团队特权，中小项目不模仿形式只学"钉版本"思想 | §3.3 |
-| C4 | AGENTS.md 详略 | ETH 实证：context file 平均降成功率、增成本 >20%[^40^]；重度派：dsh/Zed 数百行[^27^][^37^] | 价值 = 增量信息密度而非长度；每条规则问"agent 不看这条会犯错吗"，答否则删；LLM 自动生成不裁剪有害 | §8.2 |
-| C5 | AGENTS.md 内容 | 写架构派（规范/结构高频主题）[^204^]；不写概览派（概览章节实证无效）[^40^] | 区分"架构概览"（描述现状，删）与"架构约束"（禁令+理由+强制它的 lint 出处，必须写）；概览交给 agent 探索 | §8.2 |
-| C6 | 发布自动化 | 全自动 semantic-release[^181^]；Release PR 人闸[^17^]；本地命令式 cargo-release[^270^] | 默认 Release PR（机器准备+可审计）；全自动限迭代极快且下游容忍度高的工具；低频发布用本地命令式 | §7.1 |
-| C7 | spec-first vs code-first | spec 为意图 SSOT[^158^]；code 为 SSOT + 契约测试兜底[^174^] | 疆域划分：对外契约（HTTP API/扩展 ABI）偏 spec-first，内部模块偏 code-first；二者不互相重复，靠 diff/doctest/契约测试防漂移 | §6.4 |
-| C8 | pre-commit 与 CI | 同源派（CI 跑同一配置）[^94^]；质疑派（hook rev 与工具版本双 pin 漂移）[^271^] | CI 只读模式跑同一份 `.pre-commit-config.yaml`；工具版本只 pin 一次（`language: system` 调 PATH 二进制，版本归 mise/uv/flake 管）；测试矩阵不进钩子层 | §4.3 |
-| C9 | 生成物入库 | 不入库派（repo 只含原始材料）[^9^]；入库+校验派（快照/workflow YAML 入库）[^1^][^10^] | 判据 = 消费者是否需不构建即可读：CI YAML、快照、CHANGELOG 入库 + drift check；文档站点/man page 可不入库；两派共享"生成物绝不手改" | §1.1 |
-| C10 | header-only vs compiled | fmt 双 target[^198^]；abseil 不承诺 ABI[^59^]；soname 派[^269^] | 库作者默认 fmt 模式（双 target 消费者自选）；应用侧守 abseil 纪律（ABI 选项全局统一）；只有 distro 级分发才需 soname 纪律 | §7.3 |
-| C11 | Nix 深浅集成 | 浅集成：flake 只供工具链，语言 lockfile 为 SSOT[^71^]；深集成：uv2nix 翻译成 Nix 构建图[^74^] | 不矛盾，按产物分层：开发期一律浅集成；触发深集成的唯一条件是想 `nix build` 出 bit 级复现的发布产物 | §3.1 |
-| C12 | agent 权限粒度 | Codex 双旋钮[^224^]；opencode 15 键三态[^226^]；goose 风险分类自动放行[^228^] | 共识大于分歧：策略与强制分离、危险模式起吓人的名字；粒度按团队被打扰耐受度选，"用元数据做风险分类"是减少打扰的最优折中 | §8.4 |
+| #   | 冲突区                   | 各方主张                                                                                                        | 按场景的裁决                                                                                                                                         | 详见 |
+| --- | ------------------------ | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| C1  | 任务层载体               | xtask 派（类型安全、消 YAML 重复）[^97^]；just 派（语言无关、`--list` 即活文档）[^223^]                         | 分层不互斥：混合仓 justfile 做总入口，需条件逻辑/生成/解析的下沉 xtask；纯 Rust 单仓 xtask 自足；Windows 重逻辑避开 shell 用 xtask                   | §4.2 |
+| C2  | 测试形状                 | Trophy/集成优先[^112^]；金字塔单元基座[^115^]；覆盖率门（100% 死代码探测 vs fail_under=80 防退化）[^61^][^117^] | 形状是架构的函数：纯逻辑→金字塔、应用→trophy、微服务→honeycomb；库代码取"未覆盖即删"、应用取 80% 底线                                                | §5.1 |
+| C3  | C++ 依赖                 | vendored/pinned（LLVM/Chromium）；包管理器（vcpkg/Conan/CPM）；nixpkgs[^88^][^90^][^49^]                        | Nix 环境首选 nixpkgs；原生 Windows 刚需迁 vcpkg.json 为 SSOT；deps rolls 是大团队特权，中小项目不模仿形式只学"钉版本"思想                            | §3.3 |
+| C4  | AGENTS.md 详略           | ETH 实证：context file 平均降成功率、增成本 >20%[^40^]；重度派：dsh/Zed 数百行[^27^][^37^]                      | 价值 = 增量信息密度而非长度；每条规则问"agent 不看这条会犯错吗"，答否则删；LLM 自动生成不裁剪有害                                                    | §8.2 |
+| C5  | AGENTS.md 内容           | 写架构派（规范/结构高频主题）[^204^]；不写概览派（概览章节实证无效）[^40^]                                      | 区分"架构概览"（描述现状，删）与"架构约束"（禁令+理由+强制它的 lint 出处，必须写）；概览交给 agent 探索                                              | §8.2 |
+| C6  | 发布自动化               | 全自动 semantic-release[^181^]；Release PR 人闸[^17^]；本地命令式 cargo-release[^270^]                          | 默认 Release PR（机器准备+可审计）；全自动限迭代极快且下游容忍度高的工具；低频发布用本地命令式                                                       | §7.1 |
+| C7  | spec-first vs code-first | spec 为意图 SSOT[^158^]；code 为 SSOT + 契约测试兜底[^174^]                                                     | 疆域划分：对外契约（HTTP API/扩展 ABI）偏 spec-first，内部模块偏 code-first；二者不互相重复，靠 diff/doctest/契约测试防漂移                          | §6.4 |
+| C8  | pre-commit 与 CI         | 同源派（CI 跑同一配置）[^94^]；质疑派（hook rev 与工具版本双 pin 漂移）[^271^]                                  | CI 只读模式跑同一份 `.pre-commit-config.yaml`；工具版本只 pin 一次（`language: system` 调 PATH 二进制，版本归 mise/uv/flake 管）；测试矩阵不进钩子层 | §4.3 |
+| C9  | 生成物入库               | 不入库派（repo 只含原始材料）[^9^]；入库+校验派（快照/workflow YAML 入库）[^1^][^10^]                           | 判据 = 消费者是否需不构建即可读：CI YAML、快照、CHANGELOG 入库 + drift check；文档站点/man page 可不入库；两派共享"生成物绝不手改"                   | §1.1 |
+| C10 | header-only vs compiled  | fmt 双 target[^198^]；abseil 不承诺 ABI[^59^]；soname 派[^269^]                                                 | 库作者默认 fmt 模式（双 target 消费者自选）；应用侧守 abseil 纪律（ABI 选项全局统一）；只有 distro 级分发才需 soname 纪律                            | §7.3 |
+| C11 | Nix 深浅集成             | 浅集成：flake 只供工具链，语言 lockfile 为 SSOT[^71^]；深集成：uv2nix 翻译成 Nix 构建图[^74^]                   | 不矛盾，按产物分层：开发期一律浅集成；触发深集成的唯一条件是想 `nix build` 出 bit 级复现的发布产物                                                   | §3.1 |
+| C12 | agent 权限粒度           | Codex 双旋钮[^224^]；opencode 15 键三态[^226^]；goose 风险分类自动放行[^228^]                                   | 共识大于分歧：策略与强制分离、危险模式起吓人的名字；粒度按团队被打扰耐受度选，"用元数据做风险分类"是减少打扰的最优折中                               | §8.4 |
 
 这张决策表的用法是"先定位场景，再抄裁决"，三个反复出现的元规律值得单独点出。其一，**分层调和占多数**：C1/C3/C11 的"之争"其实都是不同层级的职责划分——just 与 xtask 是门面与实现、nixpkgs 与 vcpkg 是环境路线与降级通道、浅/深 Nix 集成是开发期与发布期，选边站队在这些格子本身就是错误动作。其二，**实证研究修正实践直觉**：C4/C5 中 ETH 的负收益实证（context file 平均降低 agent 成功率、增成本逾 20%[^40^]）与 Lulla 的正收益实证（根 AGENTS.md 省 token[^213^]）方向相反，调和键是"增量信息密度"——人工精简、只写 agent 无法从代码推断的内容才有效，这把 AGENTS.md 写作从"写得全不全"的品味问题变成"每条规则能否通过犯错测试"的机械判据。其三，**判据优先于结论**：C9 的"消费者是否需不构建即可读"、C7 的"对外契约 vs 内部模块"、C2 的"库 vs 应用"，都是可复用的判定函数——记住判据比记住答案更重要，因为工具版本会变、场景特征不变。第 11 章的采纳路线图将把这些裁决按采纳成本排成可执行顺序。
 
@@ -813,11 +817,11 @@ C++ 栈与其他两栈的最大差异是**不存在官方包管理器**，因此
 
 每层落地不是"配置文件已提交"，而是**一组可被任意第三方（包括 agent）执行的检查全部通过**。下表汇总三层的采纳范围、成本量级与验收标志。
 
-| 层级 | 落地项目 | 成本量级 | 验收标志 |
-|---|---|---|---|
-| 零成本层 | `rust-toolchain.toml`、`.python-version`、`CMakePresets.json` + `.clang-tidy` 检入（C++）、`.pre-commit-config.yaml`（prek）、Conventional Commits | 每项 ≤0.5 小时 | 干净机器 clone 后 rustup/uv 自动选中钉死版本；`prek run --all-files` 全绿；git log 最近提交全部符合 type 规范 |
-| 低成本层 | justfile 总入口、CI 薄化、快照测试、AGENTS.md 初版、Diátaxis 归位 | 每项 0.5–1 天 | 本地 `just ci` 与 CI 跑同一入口且结果一致；快照随代码入库、CI 只读校验；AGENTS.md <200 行且只含增量信息 |
-| 投资层 | flake+direnv 全量、xtask、release-plz+OIDC、确定性测试基建、架构 lint | 每项数天 + 持续纪律 | `nix develop -c just ci` 在 CI 与本地等价；发布流程无长期 token；随机测试失败可凭种子一键复现；越层依赖被 lint 在提交前拦截 |
+| 层级     | 落地项目                                                                                                                                           | 成本量级            | 验收标志                                                                                                                    |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| 零成本层 | `rust-toolchain.toml`、`.python-version`、`CMakePresets.json` + `.clang-tidy` 检入（C++）、`.pre-commit-config.yaml`（prek）、Conventional Commits | 每项 ≤0.5 小时      | 干净机器 clone 后 rustup/uv 自动选中钉死版本；`prek run --all-files` 全绿；git log 最近提交全部符合 type 规范               |
+| 低成本层 | justfile 总入口、CI 薄化、快照测试、AGENTS.md 初版、Diátaxis 归位                                                                                  | 每项 0.5–1 天       | 本地 `just ci` 与 CI 跑同一入口且结果一致；快照随代码入库、CI 只读校验；AGENTS.md <200 行且只含增量信息                     |
+| 投资层   | flake+direnv 全量、xtask、release-plz+OIDC、确定性测试基建、架构 lint                                                                              | 每项数天 + 持续纪律 | `nix develop -c just ci` 在 CI 与本地等价；发布流程无长期 token；随机测试失败可凭种子一键复现；越层依赖被 lint 在提交前拦截 |
 
 读表需把握一条取舍主线：成本列按"首次落地"计量，真正的差异在维护侧——零成本层的文件几乎免维护，投资层每一项都要随项目演化持续投入（flake.lock 定期更新、lint 规则随架构调整、种子回归库随失败累积）。因此层的推进应以触发条件而非"有空就做"驱动：第二个协作者加入是 flake 的触发点，首次对外发布是 OIDC 的触发点，首次出现"越层依赖在 review 中漏网"是架构 lint 的触发点。对单人项目，长期停留在低成本层是合理的终态；投资层的价值在于协作规模与发布频率放大时，把隐性的人工纪律换成显性的机械强制。
 
@@ -826,7 +830,6 @@ C++ 栈与其他两栈的最大差异是**不存在官方包管理器**，因此
 三条跨层通用的验收判据，各自对应本书的一条主线。**本地绿≡CI 绿**：同一份 `.pre-commit-config.yaml` 同时驱动本地钩子与 CI 检查[^14^]，CI 的 `run:` 只调用任务层入口[^12^]，"CI 挂了本地没法调"的调试循环由此在结构上被消灭；判定方法是把 CI 日志中的每条命令在本地逐条执行，结果必须逐条一致。**clone 后三条命令跑通**：干净机器 clone 后，应在三条命令以内（本模板实测两条：`direnv allow`、`just ci`——git 钩子由 devShell 进入时自动安装）完成从源码到全量检查通过；该判据同时是 agent 可用性测试——AGENTS.md 中列出的命令会被 agent 当真执行[^34^]，跑不通的命令对人和 agent 同为失修的文档。**文档零手抄事实**：文档中不出现可从代码生成的事实副本（版本号、命令清单、help 文本、API 签名）；判定方法是抽查文档中每条命令与数字并追问其权威位置，答不上来即违规。
 
 放眼演进方向，这三条判据的分量只会增加。2025 年 12 月 Linux Foundation 宣布成立 Agentic AI Foundation，AGENTS.md 由 OpenAI 捐赠成为创始项目之一，agent 指令文件正从社区惯例走向基金会级开放标准[^35^][^36^][^202^]。当 agent 成为仓库的常驻协作者，仓库工程的评价标准将从"人能不能看懂"转向"人机双读、机器可执行验收"：规范写成 lint 与 schema 而非散文，验收写成命令序列而非口头约定，知识写成增量信息而非文档重复。按本路线图推进的仓库恰好站在这一方向的起点上——每层验收标志不仅是给人的完成定义，也是给 agent 的可执行契约。
-
 
 # 参考文献
 

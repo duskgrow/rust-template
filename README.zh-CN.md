@@ -21,23 +21,23 @@ nix run github:duskgrow/rust-template -- my-cli your-github-name   # 拷贝 + �
 
 ## 包含什么
 
-| 维度 | 选型 | SSOT 位置 |
-|---|---|---|
-| 工具链版本 | rustup 与 flake 双消费同一文件（rust-overlay `fromRustupToolchainFile`） | `rust-toolchain.toml` |
-| 可复现环境 | flake + direnv，`flake.lock` 入库 | `flake.nix` |
-| 任务层 | just 唯一入口（本地 / git 钩子 / CI 同调，无第二份实现） | `justfile` |
-| workspace | 根虚拟清单 + `crates/*` 扁平布局；依赖与 lint 单点声明、成员继承 | 根 `Cargo.toml` |
-| 测试 | cargo-nextest（进程隔离）+ doctest + insta 快照（CI 只读、人工批准） | `.config/nextest.toml` |
-| 依赖治理 | cargo-deny 四检查（安全公告 / 许可证 / 重复版本 / 来源） | `deny.toml` |
-| 提交信息 | 修改版 Conventional Commits（`type(scope): subject`，ASCII subject，header ≤100 字符），squash-only 合并；commit-msg 钩子与 CI 检查 PR 标题双端强制 | `crates/xtask`（`check-commit`） |
-| Changelog | release-plz 从提交信息生成，按模块（commit scope）分组；日常条目不手写 | `CHANGELOG.md`（生成物） |
-| 版本与发布 | Release PR 人工闸门 → tag `v*` → dist GitHub Release；crates.io 可选启用（OIDC Trusted Publishing） | `release-plz.toml` |
-| 跨平台分发 | cargo-dist：四平台产物 + shell/powershell 安装脚本 + GitHub attestation | `dist-workspace.toml` |
-| CI | 薄编排（`nix develop -c just ci` / `prek run`），action 按完整 SHA 钉死 | `.github/workflows/` |
-| Agent 接入 | AGENTS.md（只含增量信息）+ `.agents/skills/` 判断层 skill + `just agent-check` 冒烟校验 | `AGENTS.md`、`.agents/skills/` |
-| 决策记录 | ADR（MADR 轻量格式），理由只写一次 | `docs/decisions/` |
-| 过程门禁 | PR 模板 + issue 表单 + 推荐分支保护清单；workflow YAML 由 actionlint 静态检查；提交规范由 xtask `check-commit` 子命令强制 | `.github/` |
-| 语言 | 英文为正本；`*.zh-CN.md` 为译本（先改英文版） | — |
+| 维度       | 选型                                                                                                                                                | SSOT 位置                        |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| 工具链版本 | rustup 与 flake 双消费同一文件（rust-overlay `fromRustupToolchainFile`）                                                                            | `rust-toolchain.toml`            |
+| 可复现环境 | flake + direnv，`flake.lock` 入库                                                                                                                   | `flake.nix`                      |
+| 任务层     | just 唯一入口（本地 / git 钩子 / CI 同调，无第二份实现）                                                                                            | `justfile`                       |
+| workspace  | 根虚拟清单 + `crates/*` 扁平布局；依赖与 lint 单点声明、成员继承                                                                                    | 根 `Cargo.toml`                  |
+| 测试       | cargo-nextest（进程隔离）+ doctest + insta 快照（CI 只读、人工批准）                                                                                | `.config/nextest.toml`           |
+| 依赖治理   | cargo-deny 四检查（安全公告 / 许可证 / 重复版本 / 来源）                                                                                            | `deny.toml`                      |
+| 提交信息   | 修改版 Conventional Commits（`type(scope): subject`，ASCII subject，header ≤100 字符），squash-only 合并；commit-msg 钩子与 CI 检查 PR 标题双端强制 | `crates/xtask`（`check-commit`） |
+| Changelog  | release-plz 从提交信息生成，按模块（commit scope）分组；日常条目不手写                                                                              | `CHANGELOG.md`（生成物）         |
+| 版本与发布 | Release PR 人工闸门 → tag `v*` → dist GitHub Release；crates.io 可选启用（OIDC Trusted Publishing）                                                 | `release-plz.toml`               |
+| 跨平台分发 | cargo-dist：四平台产物 + shell/powershell 安装脚本 + GitHub attestation                                                                             | `dist-workspace.toml`            |
+| CI         | 薄编排（`nix develop -c just ci` / `prek run`），action 按完整 SHA 钉死                                                                             | `.github/workflows/`             |
+| Agent 接入 | AGENTS.md（只含增量信息）+ `.agents/skills/` 判断层 skill + `just agent-check` 冒烟校验                                                             | `AGENTS.md`、`.agents/skills/`   |
+| 决策记录   | ADR（MADR 轻量格式），理由只写一次                                                                                                                  | `docs/decisions/`                |
+| 过程门禁   | PR 模板 + issue 表单 + 推荐分支保护清单；workflow YAML 由 actionlint 静态检查；提交规范由 xtask `check-commit` 子命令强制                           | `.github/`                       |
+| 语言       | 英文为正本；`*.zh-CN.md` 为译本（先改英文版）                                                                                                       | —                                |
 
 ## 发布流程（配好之后零操心）
 
