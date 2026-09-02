@@ -394,8 +394,7 @@ fn which(program: &str) -> bool {
 fn epoch_days_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs() / 86_400)
-        .unwrap_or(0)
+        .map_or(0, |duration| duration.as_secs() / 86_400)
 }
 
 /// Calendar date (`YYYY-MM-DD`, UTC) for `days` since 1970-01-01 — Howard
