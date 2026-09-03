@@ -12,7 +12,7 @@ default:
 - every push to main failed the release job until the owner completed the
   one-time Trusted Publishing setup — red CI as the very first impression of a
   fresh project;
-- worse, the *first* push attempted to publish an undescribed crate
+- worse, the _first_ push attempted to publish an undescribed crate
   immediately (`release_always` defaults to true), before any human gate —
   publishing to a public registry is a deliberate per-project decision, not a
   template default.
