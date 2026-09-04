@@ -12,7 +12,7 @@ decide "merge or hold". The agent gathers and judges; **the human merges**
 ## What the Release PR should contain
 
 - Version bump in the root `Cargo.toml`'s `[workspace.package] version` —
-  touched *only* by release-plz (hand edits are a red flag).
+  touched _only_ by release-plz (hand edits are a red flag).
 - `CHANGELOG.md` entries generated from Conventional Commits since the last
   tag. Hand-written day-to-day entries are a red flag (hand-polish of already
   released sections is fine).
@@ -33,7 +33,10 @@ decide "merge or hold". The agent gathers and judges; **the human merges**
    on the release job and no `CARGO_REGISTRY_TOKEN`; `dist-workspace.toml`
    and the generated `release.yml` are in sync (`just dist-check`); the tag
    format still matches dist's trigger (`v*`).
-5. **Green CI** on the Release PR, including `dist plan`.
+5. **Green CI** on the Release PR, including `dist plan`. `conventional
+   commits` passes by construction (`pr_body` + the changelog postprocessor in
+   `release-plz.toml`); a failure there means the template regressed — fix the
+   template, never hand-edit the generated body.
 
 ## Verdict
 
