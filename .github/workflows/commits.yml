@@ -27,7 +27,7 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
       - uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
         with:
-          use-flakehub: false # skip the paid FlakeHub probe; fall back to the GitHub Actions cache
+          use-flakehub: false # see the quality-gate job in ci.yml
       # target/ cache for the xtask compile; actions/cache over rust-cache for
       # the same reason as ci.yml (no `nix develop -c` key detection tax)
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

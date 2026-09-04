@@ -90,7 +90,7 @@ const ADR_TEMPLATE: &str = r#"# 0001. Record architecture decisions with ADRs
 
 ## Context
 
-The hardest thing to track over a project's lifetime is the *motivation* behind
+The hardest thing to track over a project's lifetime is the _motivation_ behind
 decisions; rationale scattered across PR descriptions, chat and wikis rots or
 contradicts itself.
 

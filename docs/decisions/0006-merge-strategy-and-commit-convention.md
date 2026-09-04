@@ -16,7 +16,7 @@ ADR-0003 made commit messages the version-intent SSOT and enforced Conventional 
 - **The commit convention** (SSOT: the `check-commit` subcommand of `crates/xtask`):
   - header `type(scope)!: subject`; type ∈ `feat fix docs style refactor perf test build ci chore revert`; lowercase type/scope; ASCII-only subject; header ≤ 100 chars;
   - body free-form (Chinese allowed, no width limit), one blank line after the header; footer tokens (`BREAKING CHANGE:`, `TOKEN: value`, `TOKEN #value`) preceded by a blank line;
-  - enforced at the commit-msg hook (local) and against the PR title + body (CI `commits` job); branch commits inside a PR are *not* checked, because squash makes them irrelevant to main's history.
+  - enforced at the commit-msg hook (local) and against the PR title + body (CI `commits` job); branch commits inside a PR are _not_ checked, because squash makes them irrelevant to main's history.
 - cocogitto is removed from the toolchain — one rule set, one checker, no second implementation. GitHub's automatic ` (#NNN)` suffix on squash merges is expected and tolerated by the changelog parsers (prefix matching).
 - PR format: the title obeys the convention; the body follows `.github/pull_request_template.md`; merge-time hygiene note (tidy the generated body) lives in CONTRIBUTING.
 - Issue intake gets structured forms (`.github/ISSUE_TEMPLATE/`, blank issues disabled).

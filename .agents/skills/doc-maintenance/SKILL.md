@@ -13,7 +13,7 @@ Hand-written docs carry exactly three things: **intent** (why), **rationale**
 1. Can code/config state this fact? → delete the prose, or make it generated /
    referenced (version numbers, command lists, help text, parameter tables are
    never hand-copied).
-2. Does it answer *why*? → it belongs in an ADR (`docs/decisions/`) or an
+2. Does it answer _why_? → it belongs in an ADR (`docs/decisions/`) or an
    explanation section — write it once, reference it elsewhere by number.
 3. Is it an entry point? → write it as an executable command that CI or a
    doctest can keep honest.
@@ -33,6 +33,9 @@ If none applies, the paragraph is a future drift source — don't write it.
 
 English is canonical; `*.zh-CN.md` files are translations.
 
+- Which docs get translations: external-facing portals only (README,
+  CONTRIBUTING). ADRs, AGENTS.md and skills are English-only — a translation
+  serves its readers, and those docs' readers all read English.
 - Update the English version **first**; the translation follows in the same PR.
 - Every zh-CN file carries the cross-link header (`[English](./X.md)` +
   "以英文版为准"). Translation drift is a bug — flag or fix it when noticed.
