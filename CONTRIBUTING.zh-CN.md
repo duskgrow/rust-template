@@ -39,6 +39,7 @@ git 钩子（pre-commit + commit-msg）在进入 devShell 时自动安装——g
 - GitHub 会给 squash 合并的标题自动追加 ` (#NNN)`——预期行为，保留即可。
 - `git revert` 默认的 `Revert "…"` 头不符合规范——改写成 `revert: <什么>`。
 - PR 模板只有一区：HTML 引导注释以下的内容会原样成为 commit body（打开前删掉注释——CI 会拒绝）。AI 辅助通过 `ai-assisted` 标签披露，不写进提交信息。
+- Dependabot PR：自动生成的正文不能直接落地（HTML 注释、超长段落、元数据块）——合并前改写成一两行摘要；自动标题本身已符合规范。
 
 ### PR 门禁：密钥扫描
 
@@ -96,6 +97,7 @@ changelog 由提交信息生成并按模块分组：commit 的 scope（`feat(cli
 | `ci.yml` → quality-gate        | `prek run --all-files`，与本地 git 钩子同源                                            |
 | `ci.yml` → test (ubuntu/macos) | `nix develop -c just ci`                                                               |
 | `ci.yml` → test (windows)      | rustup 原生路线，消费同一 `rust-toolchain.toml`                                        |
+| `ci.yml` → smoke (init → ci)   | 模板自测：在临时目录跑完整 init → `just ci` 流程                                       |
 | `commits.yml`                  | 对 PR 标题 + 正文做提交规范检查（即 squash 合并后的 commit message）；改标题会自动重跑 |
 | `pr-guard.yml`                 | PR diff 密钥扫描——硬失败，命中行直接标注在 PR 的 Files 页上                            |
 | `ci.yml` → dist-drift          | release.yml 生成物与 `dist-workspace.toml` 的一致性                                    |
@@ -109,7 +111,7 @@ changelog 由提交信息生成并按模块分组：commit 的 scope（`feat(cli
 这些项在 GitHub 设置里而非代码中，建仓库时设一次：
 
 - General → Pull Requests：**仅 squash merge**（禁用 merge commit 与 rebase merge）；squash 提交信息选 "Default to pull request title and description"；开启 "Automatically delete head branches"。
-- Branches → 保护 `main`：要求经 PR 合入；要求状态检查 `quality gate (prek)`、`test (ubuntu-latest)`、`test (macos-latest)`、`test (windows)`、`conventional commits`、`pr guard`、`release.yml drift check`；要求分支保持最新。
+- Branches → 保护 `main`：要求经 PR 合入；要求状态检查 `quality gate (prek)`、`test (ubuntu-latest)`、`test (macos-latest)`、`test (windows)`、`smoke (init → ci)`、`conventional commits`、`pr guard`、`release.yml drift check`；要求分支保持最新。
 - Actions → General：按上文「发布」设置 workflow 权限。
 
 同样的设置也有一份一次性 `gh` 命令块（在仓库目录内执行，需先用 `gh auth login` 登录你本人的账号——`{owner}`/`{repo}` 会从 remote 自动解析）。刻意写成文档里的命令块而不是随仓库分发的脚本：它每个仓库只跑一次、需要你本人的管理员凭据，而随仓库分发的一次性脚本只会悄悄腐烂。
@@ -117,7 +119,7 @@ changelog 由提交信息生成并按模块分组：commit 的 scope（`feat(cli
 ```bash
 gh repo edit --enable-squash-merge --enable-merge-commit=false --enable-rebase-merge=false --delete-branch-on-merge --squash-merge-commit-message=pr-title-description
 gh api repos/{owner}/{repo}/actions/permissions/workflow -X PUT -F default_workflow_permissions=write -F can_approve_pull_request_reviews=true
-gh api repos/{owner}/{repo}/branches/main/protection -X PUT -F 'required_status_checks[strict]=true' -F 'required_status_checks[contexts][]=quality gate (prek)' -F 'required_status_checks[contexts][]=test (ubuntu-latest)' -F 'required_status_checks[contexts][]=test (macos-latest)' -F 'required_status_checks[contexts][]=test (windows)' -F 'required_status_checks[contexts][]=conventional commits' -F 'required_status_checks[contexts][]=pr guard' -F 'required_status_checks[contexts][]=release.yml drift check' -F 'required_pull_request_reviews[required_approving_review_count]=0' -F enforce_admins=null -F restrictions=null
+gh api repos/{owner}/{repo}/branches/main/protection -X PUT -F 'required_status_checks[strict]=true' -F 'required_status_checks[contexts][]=quality gate (prek)' -F 'required_status_checks[contexts][]=test (ubuntu-latest)' -F 'required_status_checks[contexts][]=test (macos-latest)' -F 'required_status_checks[contexts][]=test (windows)' -F 'required_status_checks[contexts][]=smoke (init → ci)' -F 'required_status_checks[contexts][]=conventional commits' -F 'required_status_checks[contexts][]=pr guard' -F 'required_status_checks[contexts][]=release.yml drift check' -F 'required_pull_request_reviews[required_approving_review_count]=0' -F enforce_admins=null -F restrictions=null
 gh label create ai-assisted --color 8250df --description "Generative AI co-authored this PR; the pr-preflight judgment pass was run"
 ```
 
