@@ -144,7 +144,7 @@ CI 跑的每条命令本来就能本地复现（`just ci`、`prek run --all-file
 - `AGENTS.md` —— 常驻约束（命令、NEVER 禁令、风格）。只放增量信息：每条规则都要通过“agent 不看这条会犯错吗”的检验。
 - `.agents/skills/<name>/SKILL.md` —— 按任务激活的流程（渐进披露）；权威清单位于 AGENTS.md。约束放 AGENTS.md，流程放 skills，参考知识放 `docs/`（只链接不复制）。
 - `.claude/skills` 是指向 `.agents/skills` 的软链——单一事实源，多端共用。
-- `just agent-check`（在 `just ci` 内）冒烟校验整个接入面：frontmatter 形状、name/目录一致、体量预算、AGENTS 清单双向一致与指针完整性。
+- `just agent-check`（在 `just ci` 内）冒烟校验整个接入面：frontmatter 形状、name/目录一致、体量预算、AGENTS 清单双向一致、指针完整性与相对 Markdown 链接。
 
 边界：agent 可以开 PR，但永不合并、永不推 tag、永不发布；硬边界是分支保护，不是指令文件。agent 犯的重复性错误要经 `rule-maintenance` skill 回写为永久规则——与修复同 PR，而不是在聊天里反复纠正。理由见模板仓库的 ADR-0005。
 

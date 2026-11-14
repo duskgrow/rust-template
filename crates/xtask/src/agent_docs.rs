@@ -7,7 +7,8 @@
 //!   tolerates git's text-file fallback on platforms without symlink support);
 //! - `AGENTS.md` exists, stays within the always-on line budget, carries its
 //!   freshness note, and lists every discovered skill (and no stale ones);
-//! - `CLAUDE.md` is only a reference to AGENTS.md, never a second copy.
+//! - `CLAUDE.md` is only a reference to AGENTS.md, never a second copy;
+//! - relative `.md` links in agent-facing and project Markdown resolve.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -66,6 +67,7 @@ pub fn run(args: &[String]) -> ExitCode {
         &mut failures,
     );
     check_claude_md(root, &mut failures);
+    check_internal_links(root, &mut failures);
 
     if failures.is_empty() {
         println!(
@@ -407,6 +409,222 @@ fn agents_skill_entry(line: &str) -> Option<String> {
     Some(name.to_string())
 }
 
+/// Check relative inline Markdown links whose file part names a `.md` file.
+/// Anchors are deliberately out of scope. Collection and parsing stay
+/// conservative: ambiguous targets are skipped rather than misparsed.
+fn check_internal_links(root: &Path, failures: &mut Vec<String>) {
+    let files = match markdown_files(root) {
+        Ok(files) => files,
+        Err(err) => {
+            failures.push(format!("Markdown link scan: {err}"));
+            return;
+        }
+    };
+    for file in files {
+        let rel = file
+            .strip_prefix(root)
+            .unwrap_or(&file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let text = match std::fs::read_to_string(&file) {
+            Ok(text) => text,
+            Err(err) => {
+                failures.push(format!("{rel}: cannot read Markdown: {err}"));
+                continue;
+            }
+        };
+        let parent = file.parent().unwrap_or(root);
+        for target in find_md_link_targets(&text) {
+            if !parent.join(&target).is_file() {
+                failures.push(format!("{rel}: broken internal link -> {target}"));
+            }
+        }
+    }
+}
+
+fn markdown_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    for entry in read_dir_entries(root)? {
+        let file_type = entry
+            .file_type()
+            .map_err(|err| format!("inspect {}: {err}", entry.path().display()))?;
+        if !file_type.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let prefixed = name.starts_with("README") || name.starts_with("CONTRIBUTING");
+        if name == "AGENTS.md" || (prefixed && name.ends_with(".md")) {
+            files.push(entry.path());
+        }
+    }
+    for dir in [root.join("docs"), root.join(".agents/skills")] {
+        match std::fs::symlink_metadata(&dir) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+                collect_md_tree(&dir, &mut files)?;
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(format!("inspect {}: {err}", dir.display())),
+        }
+    }
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
+fn collect_md_tree(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    for entry in read_dir_entries(dir)? {
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|err| format!("inspect {}: {err}", path.display()))?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            collect_md_tree(&path, files)?;
+        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Extract file parts from relative inline links. External URLs, pure anchors,
+/// non-Markdown files, fenced code and inline code are ignored. Targets with a
+/// title are skipped rather than risking a false path diagnostic.
+fn find_md_link_targets(text: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    let mut fence: Option<(char, usize)> = None;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if let Some((marker, len)) = fence {
+            if is_fence_close(trimmed, marker, len) {
+                fence = None;
+            }
+            continue;
+        }
+        if let Some(start) = fence_start(trimmed) {
+            fence = Some(start);
+            continue;
+        }
+
+        let line = strip_inline_code(line);
+        let mut rest = line.as_str();
+        while let Some(index) = rest.find("](") {
+            let after = &rest[index + 2..];
+            let Some(close) = after.find(')') else {
+                break;
+            };
+            let raw = after[..close].trim();
+            rest = &after[close + 1..];
+            if let Some(target) = md_link_file_part(raw) {
+                targets.push(target);
+            }
+        }
+    }
+    targets
+}
+
+fn fence_start(line: &str) -> Option<(char, usize)> {
+    let mut chars = line.chars();
+    let marker = chars.next()?;
+    if marker != '`' && marker != '~' {
+        return None;
+    }
+    let len = 1 + chars.take_while(|ch| *ch == marker).count();
+    (len >= 3).then_some((marker, len))
+}
+
+fn is_fence_close(line: &str, marker: char, opening_len: usize) -> bool {
+    let line = line.trim();
+    let mut chars = line.chars();
+    if chars.next() != Some(marker) {
+        return false;
+    }
+    let len = 1 + chars.take_while(|ch| *ch == marker).count();
+    len >= opening_len && line[len..].trim().is_empty()
+}
+
+/// Remove complete backtick code spans so literal examples such as
+/// `[English](./X.md)` are not treated as links. An unmatched delimiter is
+/// literal Markdown and is therefore retained.
+fn strip_inline_code(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(open) = rest.find('`') {
+        out.push_str(&rest[..open]);
+        let ticks = &rest[open..];
+        let delimiter_len = ticks.bytes().take_while(|byte| *byte == b'`').count();
+        let content = &ticks[delimiter_len..];
+        let Some(close) = find_closing_backticks(content, delimiter_len) else {
+            out.push_str(ticks);
+            return out;
+        };
+        rest = &content[close + delimiter_len..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn find_closing_backticks(text: &str, delimiter_len: usize) -> Option<usize> {
+    let mut offset = 0;
+    while let Some(found) = text[offset..].find('`') {
+        let start = offset + found;
+        let run = text[start..]
+            .bytes()
+            .take_while(|byte| *byte == b'`')
+            .count();
+        if run == delimiter_len {
+            return Some(start);
+        }
+        offset = start + run;
+    }
+    None
+}
+
+fn md_link_file_part(raw: &str) -> Option<String> {
+    let bracketed = raw.starts_with('<') && raw.ends_with('>');
+    let raw = if bracketed {
+        &raw[1..raw.len() - 1]
+    } else {
+        raw
+    };
+    if raw.is_empty()
+        || raw.starts_with('#')
+        || raw.starts_with('/')
+        || raw.contains('%')
+        || has_uri_scheme(raw)
+    {
+        return None;
+    }
+    let file_part = raw.split('#').next().unwrap_or("").trim();
+    if file_part.is_empty()
+        || (!bracketed && file_part.chars().any(char::is_whitespace))
+        || Path::new(file_part)
+            .extension()
+            .is_none_or(|ext| ext != "md")
+    {
+        return None;
+    }
+    Some(file_part.to_string())
+}
+
+fn has_uri_scheme(target: &str) -> bool {
+    let Some(colon) = target.find(':') else {
+        return false;
+    };
+    let scheme = &target[..colon];
+    scheme
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_alphabetic)
+        && scheme
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+}
+
 fn check_claude_md(root: &Path, failures: &mut Vec<String>) {
     let path = root.join("CLAUDE.md");
     let Ok(text) = std::fs::read_to_string(&path) else {
@@ -584,5 +802,57 @@ mod tests {
         );
         assert_eq!(failures.len(), 1);
         assert!(failures[0].contains("missing `## Skills` section"));
+    }
+
+    #[test]
+    fn md_link_targets_skip_external_anchors_code_and_titles() {
+        let text = "[ADR](0012-docs.md) [section](fiber.md#s1) [external](https://example.com/x.md)\n\
+                    [mail](mailto:x.md) [anchor](#s1) [image](../assets/x.png)\n\
+                    ```text\n[fenced](fake.md)\n```\n\
+                    ~~~\n[also fenced](fake-2.md)\n~~~\n\
+                    `[inline](X.md)` [real](real.md) [title](title.md \"title\")\n\
+                    [angle](<two words.md>) [encoded](two%20words.md) [root](/README.md)\n";
+        assert_eq!(
+            find_md_link_targets(text),
+            vec![
+                "0012-docs.md".to_string(),
+                "fiber.md".to_string(),
+                "real.md".to_string(),
+                "two words.md".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn internal_links_check_scoped_markdown_and_resolve_from_each_file() {
+        let root = temp_root("links");
+        let _ = std::fs::remove_dir_all(&root);
+        let references = root.join(".agents/skills/demo/references");
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        std::fs::create_dir_all(&references).unwrap();
+        std::fs::write(root.join("README.md"), "# Home\n").unwrap();
+        std::fs::write(
+            root.join("docs/guide.md"),
+            "[home](../README.md)\n[missing](missing.md)\n\
+              [encoded](two%20words.md) [root](/missing.md)\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".agents/skills/demo/SKILL.md"),
+            "`[literal example](X.md)`\n",
+        )
+        .unwrap();
+        std::fs::write(
+            references.join("details.md"),
+            "[home](../../../../README.md)\n",
+        )
+        .unwrap();
+
+        let mut failures = Vec::new();
+        check_internal_links(&root, &mut failures);
+        std::fs::remove_dir_all(&root).unwrap();
+
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert!(failures[0].contains("docs/guide.md: broken internal link -> missing.md"));
     }
 }
