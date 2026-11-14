@@ -82,7 +82,8 @@ toolchain-bump:
 pr-guard pr="":
     cargo run -q -p xtask -- pr-guard {{ quote(pr) }}
 
-# The local full quality gate ≡ CI (modulo matrix dimensions); run before committing
+# Core local quality gate; CI adds platform and hosting checks. The template
+# repository additionally runs bootstrap smoke. pr-preflight also runs dist-check.
 ci: lint test doc deny agent-check
     @echo "just ci: all green ✅"
 
