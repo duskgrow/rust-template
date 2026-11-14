@@ -79,7 +79,7 @@ toolchain-bump:
 # hard fail. The pr-guard.yml workflow is the CI caller (needs gh + GH_TOKEN);
 # `pr-guard --staged` is the local pre-commit half.
 pr-guard pr="":
-    cargo run -q -p xtask -- pr-guard {{pr}}
+    cargo run -q -p xtask -- pr-guard {{ quote(pr) }}
 
 # The local full quality gate ≡ CI (modulo matrix dimensions); run before committing
 ci: lint test doc deny agent-check
@@ -87,11 +87,11 @@ ci: lint test doc deny agent-check
 
 # Add an internal crate (unpublished by default; rules in CONTRIBUTING.md "Adding a crate")
 new-crate name:
-    cargo run -q -p xtask -- new-crate {{name}}
+    cargo run -q -p xtask -- new-crate {{ quote(name) }}
 
 # >>> template-only: bootstrap entry; removed by a successful init
 
 # Turn the template into a fresh project (rename, strip template artifacts, git init)
 init name owner:
-    cargo run -q -p xtask -- init {{name}} {{owner}}
+    cargo run -q -p xtask -- init {{ quote(name) }} {{ quote(owner) }}
 # <<< template-only

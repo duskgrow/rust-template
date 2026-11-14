@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use crate::new_crate::is_kebab_case;
+use crate::new_crate::{MAX_CRATE_NAME_LEN, is_kebab_case, is_rust_keyword};
 
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 /// This very file contains the placeholder literals and is deleted at the end
@@ -14,13 +14,24 @@ const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 const SELF_REL: &str = "crates/xtask/src/init.rs";
 /// Never substituted: VCS/build/tooling directories.
 const SKIP_DIRS: [&str; 3] = [".git", "target", ".direnv"];
+const TEMPLATE_STRIP_FILES: [&str; 4] = [
+    "justfile",
+    "flake.nix",
+    ".github/workflows/ci.yml",
+    "crates/xtask/src/main.rs",
+];
+const TEMPLATE_RESIDUE: [&str; 4] = [
+    "__project_name__",
+    "__GITHUB_OWNER__",
+    ">>> template-only",
+    "<<< template-only",
+];
 
 const README_TEMPLATE: &str = r"# @PROJECT@
 
 [中文文档](./README.zh-CN.md)
 
 [![CI](https://github.com/@OWNER@/@PROJECT@/actions/workflows/ci.yml/badge.svg)](https://github.com/@OWNER@/@PROJECT@/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/@PROJECT@.svg)](https://crates.io/crates/@PROJECT@)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](./LICENSE-MIT)
 
 TODO: one-line description of what this project does (also update `description` in crates/@PROJECT@/Cargo.toml).
@@ -31,9 +42,8 @@ After the first release, use the installer from GitHub Releases:
 
     curl --proto '=https' --tlsv1.2 -LsSf https://github.com/@OWNER@/@PROJECT@/releases/latest/download/@PROJECT@-installer.sh | sh
 
-or install from crates.io:
-
-    cargo install @PROJECT@
+crates.io installation becomes available after opting into registry publishing
+and publishing the crate; see the Releasing section in CONTRIBUTING.md.
 
 ## Usage
 
@@ -42,7 +52,7 @@ See `@PROJECT@ --help`.
 ## Development
 
     direnv allow   # or: nix develop (entering the shell also arms the git hooks)
-    just ci        # full quality gate (local green ≡ CI green)
+    just ci        # core local quality gate; CI adds platform and hosting checks
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
@@ -63,9 +73,7 @@ TODO: 一句话说明这个项目做什么（同步更新 crates/@PROJECT@/Cargo
 
     curl --proto '=https' --tlsv1.2 -LsSf https://github.com/@OWNER@/@PROJECT@/releases/latest/download/@PROJECT@-installer.sh | sh
 
-或从 crates.io 安装：
-
-    cargo install @PROJECT@
+按 CONTRIBUTING.zh-CN.md「发布」启用 registry 发布并实际发布 crate 后，也可以从 crates.io 安装。
 
 ## 使用
 
@@ -74,7 +82,7 @@ TODO: 一句话说明这个项目做什么（同步更新 crates/@PROJECT@/Cargo
 ## 开发
 
     direnv allow   # 或 nix develop（进入 devShell 会自动安装 git 钩子）
-    just ci        # 全量质量门（本地绿 ≡ CI 绿）
+    just ci        # 本地核心质量门；CI 另跑平台矩阵与托管侧检查
 
 详见 [CONTRIBUTING.zh-CN.md](./CONTRIBUTING.zh-CN.md)。
 
@@ -112,17 +120,44 @@ and code.
 
 /// Entry point: `init <project-name> <github-owner>`.
 pub fn run(args: &[String]) -> ExitCode {
+    run_at_with(args, Path::new(ROOT), bootstrap)
+}
+
+fn run_at_with<F>(args: &[String], root: &Path, bootstrap: F) -> ExitCode
+where
+    F: FnOnce(&Path, &str, &str, &str, &Path, bool) -> Result<(), String>,
+{
+    run_at_with_tool_probe(args, root, which, bootstrap)
+}
+
+fn run_at_with_tool_probe<F, W>(
+    args: &[String],
+    root: &Path,
+    tool_on_path: W,
+    bootstrap: F,
+) -> ExitCode
+where
+    F: FnOnce(&Path, &str, &str, &str, &Path, bool) -> Result<(), String>,
+    W: Fn(&str) -> bool,
+{
     let [name, owner] = args else {
-        return fail(
-            "missing arguments",
-            "init requires a project name and a GitHub owner",
-            "just init my-cli octocat",
-        );
+        eprintln!("usage: init <project-name> <github-owner>  (example: just init my-cli octocat)");
+        return ExitCode::from(2);
     };
     // GitHub repository names often carry capitals (e.g. "Cadmus") while crate
     // names must not — normalize case instead of rejecting; other invalid
     // characters still fail the kebab-case check below.
     let name = &name.to_lowercase();
+    if name.len() > MAX_CRATE_NAME_LEN {
+        return fail(
+            &format!(
+                "project name is {} bytes; the limit is {MAX_CRATE_NAME_LEN}",
+                name.len()
+            ),
+            "a bounded package name stays portable across filesystems and registries",
+            "choose a shorter kebab-case name",
+        );
+    }
     if !is_kebab_case(name) {
         return fail(
             &format!("invalid project name: '{name}'"),
@@ -130,14 +165,20 @@ pub fn run(args: &[String]) -> ExitCode {
             "lowercase letters, digits and hyphens only, e.g. my-cli",
         );
     }
+    if is_rust_keyword(name) {
+        return fail(
+            &format!("invalid project name: '{name}'"),
+            "the generated Rust source refers to the crate by its plain identifier, which cannot be a Rust keyword",
+            "choose a non-keyword name such as my-cli",
+        );
+    }
     if !is_github_owner(owner) {
         return fail(
             &format!("invalid GitHub owner: '{owner}'"),
-            "GitHub user/org names allow only letters, digits and hyphens",
+            "GitHub user/org names allow only letters, digits and hyphens and are at most 39 bytes",
             "e.g. octocat or my-org",
         );
     }
-    let root = Path::new(ROOT);
     let placeholder_dir = root.join("crates/__project_name__");
     if !placeholder_dir.is_dir() {
         return fail(
@@ -147,26 +188,70 @@ pub fn run(args: &[String]) -> ExitCode {
         );
     }
 
+    let target_dir = root.join("crates").join(name);
+    match std::fs::symlink_metadata(&target_dir) {
+        Ok(_) => {
+            return fail(
+                &format!("target crate directory already exists: crates/{name}"),
+                "init must not overwrite an existing crate (including the xtask tooling crate)",
+                "choose another project name",
+            );
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return fail(
+                "cannot inspect the target crate directory",
+                &format!("{}: {err}", target_dir.display()),
+                "check the path permissions before running init",
+            );
+        }
+    }
+    let has_git = match ensure_clean_existing_repo(root) {
+        Ok(has_git) => has_git,
+        Err(err) => {
+            return fail(
+                "existing git repository is not clean and readable",
+                &err,
+                "use a pristine clone; init refuses to overwrite or stage unrelated work",
+            );
+        }
+    };
+    for tool in ["git", "prek"] {
+        if !tool_on_path(tool) {
+            return fail(
+                &format!("required tool not found on PATH: {tool}"),
+                "init stages the tree and installs git hooks after rewriting it",
+                "run through `nix develop` / `nix run`, or install the missing tool first",
+            );
+        }
+    }
     let snake = name.replace('-', "_");
     println!("==> project: {name} (rust crate: {snake})   owner: {owner}");
-    if let Err(err) = bootstrap(root, name, &snake, owner, &placeholder_dir) {
-        eprintln!("error: {err}");
+    if let Err(err) = bootstrap(root, name, &snake, owner, &placeholder_dir, has_git) {
+        eprintln!("error: init failed without rollback: {err}");
         return ExitCode::FAILURE;
     }
 
+    report_success(name, owner);
+    ExitCode::SUCCESS
+}
+
+fn report_success(name: &str, owner: &str) {
     println!(
         "
 ✅ {name} initialized — zero template residue, the whole tree staged, and the
-   git hooks already armed. No commits yet: the first commit is yours.
+   git hooks armed. Existing history is preserved when present; no commit was
+   created for you.
 
 Next steps:
   1. Review the staged tree        git status && git diff --cached --stat
-  2. Make your first commit        git commit -m \"chore: initial commit\"
+  2. Commit the initialized tree   git commit -m \"chore: initial commit\"
      (hooks fire on it: just fmt + just lint + the commit-msg convention check)
-  3. Run the full quality gate     just ci
+  3. Run the core quality gate     just ci
   4. Fill in the crate description: the description field in
      crates/{name}/Cargo.toml (feeds --help and crates.io)
-  5. Create the GitHub repo        gh repo create {owner}/{name} --public --source=. --push
+  5. Check the GitHub remote       git remote -v
+     (if absent: gh repo create {owner}/{name} --public --source=. --push)
   6. Lock the repo down            see CONTRIBUTING.md \"Repository settings\"
      (squash-only merge + branch protection — the hard boundary that keeps
      both humans and agents from merging red code)
@@ -174,7 +259,6 @@ Next steps:
      (GitHub Actions permissions; crates.io publishing stays off until you opt in)
 "
     );
-    ExitCode::SUCCESS
 }
 
 fn bootstrap(
@@ -183,7 +267,17 @@ fn bootstrap(
     snake: &str,
     owner: &str,
     placeholder_dir: &Path,
+    has_git: bool,
 ) -> Result<(), String> {
+    // Validate every fenced block before the first write. A malformed marker
+    // must never turn into silent deletion halfway through bootstrap.
+    for rel in TEMPLATE_STRIP_FILES {
+        let path = root.join(rel);
+        let text = std::fs::read_to_string(&path)
+            .map_err(|err| format!("read {}: {err}", path.display()))?;
+        template_only_stripped(&text).map_err(|err| format!("{}: {err}", path.display()))?;
+    }
+
     // 1. Placeholder substitution: snake_case in .rs files (Rust crate
     //    references), kebab-case everywhere else.
     let mut files = Vec::new();
@@ -197,12 +291,7 @@ fn bootstrap(
     // 2. Remove template artifacts (blocks fenced by template-only markers
     //    + template-only files, including this module).
     println!("==> stripping template-only parts");
-    for rel in [
-        "justfile",
-        "flake.nix",
-        ".github/workflows/ci.yml",
-        "crates/xtask/src/main.rs",
-    ] {
+    for rel in TEMPLATE_STRIP_FILES {
         strip_template_only(&root.join(rel))?;
     }
     remove_file(&root.join("docs/engspec.md"))?;
@@ -236,31 +325,63 @@ fn bootstrap(
     )
     .map_err(|err| format!("write ADR: {err}"))?;
 
-    // 5. Rebuild the lockfile + git init + stage the tree. Deliberately NO
-    //    commit: the project's history must be authored entirely by its owner.
+    // 5. Rebuild the lockfile, prove the generated tree is residue-free, then
+    //    git init (only when absent) + stage. Deliberately NO commit: the
+    //    project's history is authored by its owner.
     println!("==> regenerating Cargo.lock");
     run_cmd("cargo", &["generate-lockfile"], root)?;
-    if !root.join(".git").is_dir() {
+    files.clear();
+    walk(root, &mut files)?;
+    ensure_no_template_residue(&files)?;
+    if !has_git {
         run_cmd("git", &["init", "-b", "main"], root)?;
     }
     run_cmd("git", &["add", "-A"], root)?;
 
     // Arm the git hooks now so the creator has zero setup steps left (the
-    // devShell shellHook does the same for every future contributor).
-    if which("prek") {
-        run_cmd(
-            "prek",
-            &[
-                "install",
-                "--hook-type",
-                "pre-commit",
-                "--hook-type",
-                "commit-msg",
-            ],
-            root,
-        )?;
-    }
+    // devShell shellHook does the same for every future contributor). `prek`
+    // was checked before any write, so success here means hooks really exist.
+    run_cmd(
+        "prek",
+        &[
+            "install",
+            "--hook-type",
+            "pre-commit",
+            "--hook-type",
+            "commit-msg",
+        ],
+        root,
+    )?;
     Ok(())
+}
+
+/// An existing clone must be pristine: bootstrap rewrites tracked files and
+/// stages the whole tree, so unrelated staged, unstaged or untracked work is a
+/// hard stop. Git failures are not an unborn-branch signal — they fail closed.
+fn ensure_clean_existing_repo(root: &Path) -> Result<bool, String> {
+    let has_git = match std::fs::symlink_metadata(root.join(".git")) {
+        Ok(_) => true,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(err) => return Err(format!("cannot inspect .git metadata: {err}")),
+    };
+    if !has_git {
+        return Ok(false);
+    }
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .current_dir(root)
+        .output()
+        .map_err(|err| format!("spawn git status: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git status failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    if !output.stdout.is_empty() {
+        return Err("staged, unstaged or untracked files are present".to_string());
+    }
+    Ok(true)
 }
 
 /// Three-part bootstrap failure: what happened / why / what to do.
@@ -269,10 +390,11 @@ fn fail(what: &str, why: &str, how: &str) -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// `[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?` — GitHub user/org names.
+/// `[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?` — GitHub user/org names.
 fn is_github_owner(owner: &str) -> bool {
     let bytes = owner.as_bytes();
     !bytes.is_empty()
+        && bytes.len() <= 39
         && bytes[0].is_ascii_alphanumeric()
         && bytes[bytes.len() - 1].is_ascii_alphanumeric()
         && bytes
@@ -326,9 +448,7 @@ fn substitute(
         if only_rs && path.extension().is_none_or(|ext| ext != "rs") {
             continue;
         }
-        let Ok(bytes) = std::fs::read(path) else {
-            continue;
-        };
+        let bytes = std::fs::read(path).map_err(|err| format!("read {}: {err}", path.display()))?;
         let Ok(text) = String::from_utf8(bytes) else {
             continue;
         };
@@ -346,18 +466,65 @@ fn substitute(
 fn strip_template_only(path: &Path) -> Result<(), String> {
     let text =
         std::fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    let out = template_only_stripped(&text).map_err(|err| format!("{}: {err}", path.display()))?;
+    std::fs::write(path, out).map_err(|err| format!("write {}: {err}", path.display()))
+}
+
+/// Pure marker parser, separate from writing so bootstrap can validate every
+/// fenced file before modifying the tree.
+fn template_only_stripped(text: &str) -> Result<String, String> {
     let mut out = String::with_capacity(text.len());
     let mut inside = false;
-    for line in text.split_inclusive('\n') {
-        if line.contains(">>> template-only") {
-            inside = true;
-        } else if line.contains("<<< template-only") {
-            inside = false;
-        } else if !inside {
-            out.push_str(line);
+    for (index, line) in text.split_inclusive('\n').enumerate() {
+        let starts = line.contains(">>> template-only");
+        let ends = line.contains("<<< template-only");
+        let line_number = index + 1;
+        match (starts, ends, inside) {
+            (true, true, _) => {
+                return Err(format!(
+                    "line {line_number}: start and end template-only markers share one line"
+                ));
+            }
+            (true, false, true) => {
+                return Err(format!(
+                    "line {line_number}: nested template-only start marker"
+                ));
+            }
+            (false, true, false) => {
+                return Err(format!(
+                    "line {line_number}: template-only end marker has no start"
+                ));
+            }
+            (true, false, false) => inside = true,
+            (false, true, true) => inside = false,
+            (false, false, false) => out.push_str(line),
+            (false, false, true) => {}
         }
     }
-    std::fs::write(path, out).map_err(|err| format!("write {}: {err}", path.display()))
+    if inside {
+        return Err("template-only start marker is not closed".to_string());
+    }
+    Ok(out)
+}
+
+/// Postcondition for every bootstrap path, not only the CI smoke copy.
+fn ensure_no_template_residue(files: &[PathBuf]) -> Result<(), String> {
+    for path in files {
+        let bytes = std::fs::read(path).map_err(|err| format!("read {}: {err}", path.display()))?;
+        let Ok(text) = String::from_utf8(bytes) else {
+            continue;
+        };
+        if let Some(marker) = TEMPLATE_RESIDUE
+            .iter()
+            .find(|marker| text.contains(**marker))
+        {
+            return Err(format!(
+                "template residue {marker:?} remains in {}",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn remove_file(path: &Path) -> Result<(), String> {
@@ -417,6 +584,145 @@ fn civil_from_days(days: u64) -> String {
 mod tests {
     use super::*;
 
+    fn temp_root(label: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("xtask-init-{label}-{}-{nonce}", std::process::id()))
+    }
+
+    #[test]
+    fn entry_point_rejects_invalid_names_before_writing() {
+        let root = temp_root("invalid-names");
+        let placeholder = root.join("crates/__project_name__");
+        std::fs::create_dir_all(&placeholder).unwrap();
+        let sentinel = placeholder.join("sentinel.txt");
+        std::fs::write(&sentinel, "untouched").unwrap();
+        for name in ["type".to_string(), "a".repeat(MAX_CRATE_NAME_LEN + 1)] {
+            let args = vec![name, "owner".to_string()];
+            assert!(matches!(
+                run_at_with(&args, &root, |_, _, _, _, _, _| {
+                    panic!("bootstrap must not run for invalid names")
+                }),
+                ExitCode::FAILURE
+            ));
+        }
+        assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "untouched");
+        assert_eq!(std::fs::read_dir(placeholder).unwrap().count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn dirty_existing_repo_is_rejected_without_touching_user_work() {
+        let root = temp_root("dirty-repo");
+        std::fs::create_dir_all(root.join("crates/__project_name__")).unwrap();
+        let readme = root.join("README.md");
+        std::fs::write(&readme, "user work").unwrap();
+        let initialized = std::process::Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(initialized.status.success());
+
+        assert!(ensure_clean_existing_repo(&root).is_err());
+        let args = vec!["dirty-app".to_string(), "owner".to_string()];
+        assert!(matches!(
+            run_at_with(&args, &root, |_, _, _, _, _, _| {
+                panic!("bootstrap must not run for a dirty repository")
+            }),
+            ExitCode::FAILURE
+        ));
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), "user work");
+        assert!(!root.join("crates/dirty-app").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn git_probe_distinguishes_absent_clean_and_broken_repositories() {
+        let absent = temp_root("no-git");
+        std::fs::create_dir_all(&absent).unwrap();
+        assert!(!ensure_clean_existing_repo(&absent).unwrap());
+        std::fs::remove_dir_all(absent).unwrap();
+
+        let clean = temp_root("clean-git");
+        std::fs::create_dir_all(&clean).unwrap();
+        let initialized = std::process::Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(&clean)
+            .output()
+            .unwrap();
+        assert!(initialized.status.success());
+        assert!(ensure_clean_existing_repo(&clean).unwrap());
+        std::fs::remove_dir_all(clean).unwrap();
+
+        let broken = temp_root("broken-git");
+        std::fs::create_dir_all(broken.join("crates/__project_name__")).unwrap();
+        std::fs::write(broken.join(".git"), "not a gitdir").unwrap();
+        assert!(ensure_clean_existing_repo(&broken).is_err());
+        let args = vec!["broken-app".to_string(), "owner".to_string()];
+        assert!(matches!(
+            run_at_with(&args, &broken, |_, _, _, _, _, _| {
+                panic!("bootstrap must not run for an unreadable repository")
+            }),
+            ExitCode::FAILURE
+        ));
+        std::fs::remove_dir_all(broken).unwrap();
+    }
+
+    #[test]
+    fn successful_bootstrap_receives_the_probed_git_state() {
+        for expected in [false, true] {
+            let root = temp_root(if expected { "with-git" } else { "without-git" });
+            std::fs::create_dir_all(root.join("crates/__project_name__")).unwrap();
+            if expected {
+                let initialized = std::process::Command::new("git")
+                    .args(["init", "-b", "main"])
+                    .current_dir(&root)
+                    .output()
+                    .unwrap();
+                assert!(initialized.status.success());
+                // Keep the fixture commit-free: ignoring the scaffold makes the
+                // existing repository clean without changing init's input tree.
+                std::fs::write(root.join(".git/info/exclude"), "crates/\n").unwrap();
+            }
+            let args = vec!["demo".to_string(), "owner".to_string()];
+            assert!(matches!(
+                run_at_with_tool_probe(
+                    &args,
+                    &root,
+                    |_| true,
+                    |_, _, _, _, _, actual| {
+                        assert_eq!(actual, expected);
+                        Ok(())
+                    }
+                ),
+                ExitCode::SUCCESS
+            ));
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn residue_check_rejects_every_template_marker() {
+        let root = temp_root("residue");
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("sample.txt");
+        for marker in [
+            "__project_name__",
+            "__GITHUB_OWNER__",
+            ">>> template-only",
+            "<<< template-only",
+        ] {
+            std::fs::write(&file, format!("before {marker} after")).unwrap();
+            assert!(ensure_no_template_residue(std::slice::from_ref(&file)).is_err());
+        }
+        std::fs::write(&file, "generated project").unwrap();
+        assert!(ensure_no_template_residue(std::slice::from_ref(&file)).is_ok());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn civil_from_days_matches_known_dates() {
         assert_eq!(civil_from_days(0), "1970-01-01");
@@ -432,6 +738,23 @@ mod tests {
         assert!(!is_github_owner("bad-"));
         assert!(!is_github_owner("bad_name"));
         assert!(!is_github_owner(""));
+        assert!(!is_github_owner(&"a".repeat(40)));
+    }
+
+    #[test]
+    fn template_only_parser_rejects_unbalanced_markers() {
+        for text in [
+            "keep\n# >>> template-only\ndrop\n",
+            "keep\n# <<< template-only\n",
+            "# >>> template-only\n# >>> template-only\n# <<< template-only\n",
+            "# >>> template-only # <<< template-only\n",
+        ] {
+            assert!(template_only_stripped(text).is_err(), "accepted {text:?}");
+        }
+        assert_eq!(
+            template_only_stripped("plain\ntext\n").unwrap(),
+            "plain\ntext\n"
+        );
     }
 
     #[test]
