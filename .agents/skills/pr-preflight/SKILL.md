@@ -14,10 +14,11 @@ reviewing another person's (or another agent's) PR.
 
 ```bash
 just ci                      # lint (clippy -D warnings + actionlint), tests, docs, deny, agent-check
+just dist-check              # generated release workflow matches dist-workspace.toml
 prek run --all-files         # same hooks as the commit-time gate
 ```
 
-Both must be green. Never suppress, skip, or "fix later" a failure. If a gate
+All three must be green. Never suppress, skip, or "fix later" a failure. If a gate
 is wrong, fix the gate in its own PR.
 
 ## 1. Diff self-review
