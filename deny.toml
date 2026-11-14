@@ -19,12 +19,12 @@ highlight = "all"
 # requires a discussion in the PR first. Prefer a per-crate exception below
 # over widening this global list.
 allow = [
-    "MIT",
-    "Apache-2.0",
-    "Apache-2.0 WITH LLVM-exception",
-    "ISC",
-    "Unicode-3.0",
-    "0BSD",
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "ISC",
+  "Unicode-3.0",
+  "0BSD",
 ]
 # Per-crate exceptions: the license is allowed ONLY for the named crate, so a
 # new crate arriving under the same license still trips the gate. The fuse is

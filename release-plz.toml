@@ -50,13 +50,13 @@ pr_body = """
 # convention's scope). Never hand-edit released sections.
 [changelog]
 commit_parsers = [
-    # scoped commits get their own module section (Zed-style release notes)
-    { message = '^(\w+)\(([^)]+)\)', group = "${2}" },
-    # unscoped commits fall back to type groups
-    { message = "^feat", group = "features" },
-    { message = "^fix", group = "fixes" },
-    { message = "^security", group = "security" },
-    { message = "^.*", group = "other" },
+  # scoped commits get their own module section (Zed-style release notes)
+  { message = '^(\w+)\(([^)]+)\)', group = "${2}" },
+  # unscoped commits fall back to type groups
+  { message = "^feat", group = "features" },
+  { message = "^fix", group = "fixes" },
+  { message = "^security", group = "security" },
+  { message = "^.*", group = "other" },
 ]
 body = """
 ## [{{ version }}]{%- if release_link -%}({{ release_link }}){% endif %}{%- if timestamp %} - {{ timestamp | date(format="%Y-%m-%d") }}{% endif %}
