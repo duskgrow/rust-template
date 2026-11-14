@@ -425,7 +425,7 @@ fn check_internal_links(root: &Path, failures: &mut Vec<String>) {
             .strip_prefix(root)
             .unwrap_or(&file)
             .to_string_lossy()
-            .into_owned();
+            .replace('\\', "/");
         let text = match std::fs::read_to_string(&file) {
             Ok(text) => text,
             Err(err) => {
