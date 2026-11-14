@@ -21,7 +21,7 @@ setup:
 # In CI the pre-commit framework fails the job if files were modified by this
 # (see the quality-gate job), so the check-mode twin is only exercised there.
 
-# Format Rust (rustfmt) and markdown (dprint; config: dprint.json) — write mode
+# Format Rust (rustfmt) and Markdown/TOML (dprint; config: dprint.json) — write mode
 fmt:
     cargo fmt --all
     dprint fmt
@@ -31,7 +31,7 @@ fmt:
 # No path argument: actionlint discovers .github/workflows/ itself, because
 # the Windows shell (PowerShell) does not expand globs for native commands.
 
-# Static checks: rustfmt --check, dprint check (markdown), clippy (-D warnings), actionlint on workflow YAML
+# Static checks: rustfmt --check, dprint check (Markdown/TOML), clippy (-D warnings), actionlint on workflow YAML
 lint:
     cargo fmt --all -- --check
     dprint check
