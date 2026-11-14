@@ -1,10 +1,10 @@
 # AGENTS.md
 
-<!-- Freshness: Commands tracks the justfile; NEVER tracks the generated-file list and .github/; Skills tracks .agents/skills/. Last reviewed: 2026-09 -->
+<!-- Freshness: Commands tracks the justfile; NEVER tracks the generated-file list and .github/; Skills tracks .agents/skills/. Last reviewed: 2026-11 -->
 
 ## Commands (just is the only entry point; never bypass the quality gates)
 
-- Full quality gate: `just ci` (local green ≡ CI green; run before every commit)
+- Core quality gate: `just ci` (run before every commit; CI adds platform and hosting checks, and the template repository additionally runs bootstrap smoke)
 - Format / static checks: `just fmt` / `just lint` (rustfmt + dprint for Markdown/TOML; actionlint on workflow YAML)
 - All tests: `just test`; single test: `cargo nextest run -p __project_name__ <name>`
 - Iterate with the narrowest loop first (`cargo check -p <crate>`, scoped nextest); finish with `just ci`
@@ -28,13 +28,14 @@
 - `rule-maintenance` — how to update AGENTS.md and skills when rules change or mistakes repeat
 - `doc-maintenance` — writing/reviewing docs: three-question filter, EN-canonical translation sync, drift hunting
 - `code-simplification` — behavior-preserving dedup/dead-code/abstraction cleanup, always as its own change
+- `explain-diff` — maintainer-facing rich HTML walkthrough of a change + in-chat quiz, for reading large diffs
 - `release-review` — the human-gate checklist for merging a release-plz Release PR
 
 Done = `just ci` green + the `pr-preflight` checklist clean.
 
 ## NEVER
 
-- NEVER hand-edit generated files: `Cargo.lock`, released sections of `CHANGELOG.md`, `.github/workflows/release.yml` (generator: `dist generate`; drift check: `just dist-check`).
+- NEVER hand-edit generated files: `Cargo.lock`, any generated entries in `CHANGELOG.md` (including released sections), `.github/workflows/release.yml` (generator: `dist generate`; drift check: `just dist-check`).
 - NEVER write multi-line logic in a CI YAML `run:` field — sink it into the justfile; CI only calls single-line entry points.
 - NEVER hand-write version numbers: the single storage point is `[workspace.package] version` in the root `Cargo.toml`; release-plz rewrites it mechanically.
 - NEVER commit code that hasn't passed `just ci`; NEVER assemble ad-hoc check pipelines that bypass just.

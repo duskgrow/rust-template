@@ -15,9 +15,9 @@ nix run github:duskgrow/rust-template -- my-cli your-github-name   # 拷贝 + �
 
 等价的两步路径：`nix flake init -t github:duskgrow/rust-template`（仅拷贝，无 git 历史），再 `nix develop -c just init my-cli your-github-name`。
 
-结束后你就得到一个"从空仓库长出来"的项目：模板制品（模板 README、init 脚本、规范报告、冒烟自检 CI job）全部移除，git 历史为空——全部文件已暂存，第一个 commit 由你亲手提交。
+结束后你就得到一个像手工搭建的项目：模板制品（模板 README、init 脚本、规范报告、冒烟自检 CI job）全部移除，全部文件已暂存。两种 Nix 引导路径还会从空 git 历史开始，第一个 commit 由你亲手提交；clone 与 GitHub Template 路径则保留仓库已有的引导历史，不再谎称历史为空。
 
-不用 Nix 命令行也行：把本仓库标记为 Template repository（Settings → General → Template repository），点 "Use this template" 建仓库——一个一次性 workflow 会自动完成初始化（仓库名即项目名——大写会自动转为 kebab-case 的 crate 名；workflow 随后自毁，其 GITHUB_TOKEN 推送按 GitHub 递归保护不触发 CI——你的首次推送才会触发）。等价本地路径：clone 后跑 `nix develop -c just init <name> <owner>`。
+不用 Nix 命令行也行：把本仓库标记为 Template repository（Settings → General → Template repository），点 "Use this template" 建仓库——一个一次性 workflow 会自动完成初始化（仓库名即项目名——大写会自动转为 kebab-case 的 crate 名；workflow 随后自毁，其 GITHUB_TOKEN 推送按 GitHub 递归保护不触发 CI——你的首次推送才会触发）。等价本地路径：使用干净的 clone，再跑 `nix develop -c just init <name> <owner>`（init 不会覆盖或暂存无关工作）。
 
 ## 包含什么
 
@@ -30,7 +30,7 @@ nix run github:duskgrow/rust-template -- my-cli your-github-name   # 拷贝 + �
 | 测试       | cargo-nextest（进程隔离）+ doctest + insta 快照（CI 只读、人工批准）                                                                                | `.config/nextest.toml`           |
 | 依赖治理   | cargo-deny 四检查（安全公告 / 许可证 / 重复版本 / 来源）                                                                                            | `deny.toml`                      |
 | 提交信息   | 修改版 Conventional Commits（`type(scope): subject`，ASCII subject，header ≤100 字符），squash-only 合并；commit-msg 钩子与 CI 检查 PR 标题双端强制 | `crates/xtask`（`check-commit`） |
-| Changelog  | release-plz 从提交信息生成，按模块（commit scope）分组；日常条目不手写                                                                              | `CHANGELOG.md`（生成物）         |
+| Changelog  | release-plz 从提交信息生成，按模块（commit scope）分组；所有生成条目均不手写（含已发布内容）                                                        | `CHANGELOG.md`（生成物）         |
 | 版本与发布 | Release PR 人工闸门 → tag `v*` → dist GitHub Release；crates.io 可选启用（OIDC Trusted Publishing）                                                 | `release-plz.toml`               |
 | 跨平台分发 | cargo-dist：四平台产物 + shell/powershell 安装脚本 + GitHub attestation                                                                             | `dist-workspace.toml`            |
 | CI         | 薄编排（`nix develop -c just ci` / `prek run`），action 按完整 SHA 钉死                                                                             | `.github/workflows/`             |
@@ -57,7 +57,7 @@ nix run github:duskgrow/rust-template -- my-cli your-github-name   # 拷贝 + �
 ## 按需裁剪
 
 - 纯库项目：删除 `dist-workspace.toml` 与 `.github/workflows/release.yml`
-- 不要 Windows 支持：删 ci.yml 的 `test-windows` job 与 `dist-workspace.toml` 里的 msvc target
+- 不要 Windows 支持：删 ci.yml 的 `test-windows` job 与 `dist-workspace.toml` 里的 msvc target，并从 CONTRIBUTING.md 推荐的分支保护检查中移除 `test (windows)`
 - 需要原生 Windows 开发：走 WSL2（见 docs/decisions/0004）
 
 ## 给模板自身做贡献
@@ -69,4 +69,4 @@ nix run github:duskgrow/rust-template -- my-cli your-github-name   # 拷贝 + �
 1. **作为本仓库**——模板自身的 `just ci` 必须保持绿（占位 crate 名 `__project_name__` 本身是合法的 crate 名，所以模板是一个真实可构建的 workspace）。
 2. **作为未来所有生成项目**——凡是没有被 init 剥掉的东西都会随模板分发到下游：devShell 里的新工具、workflow 里的新 job、AGENTS.md 里的新规则。每个改动都要问一句：它属于哪个身份？模板专属内容放在 `# >>> template-only` / `# <<< template-only` 围栏内（Rust 源码用 `// …` 前缀；由 xtask 的 `init` 模块剥除），或放在 init 会替换/删除的文件里（本 README、`docs/engspec.md`、`docs/decisions/`、init 模块自身）。因此，面向模板维护者的引导只能写在本 README——绝不写进会随项目分发的 CONTRIBUTING.md。
 
-CI 的 `smoke-init` job 就是第二重身份的质量门：它在临时目录跑完整的 `just init` → `just ci` → `just dist-check` 流程——漏掉的占位符或坏掉的生成项目会让模板自己的 CI 变红。引导机制的设计理由见 `docs/decisions/0001`。
+CI 的 `smoke-init` job 就是第二重身份的质量门：它在临时目录跑完整的 `just init` → `just ci` → `just dist-check` 流程——漏掉的占位符或坏掉的生成项目会让模板自己的 CI 变红。保护模板仓库自身的分支时，还要额外要求 `smoke (init → ci)`；生成的项目不能要求它，因为 init 已删除这个 job。引导机制的设计理由见 `docs/decisions/0001`。

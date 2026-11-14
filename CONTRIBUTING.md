@@ -99,7 +99,6 @@ Don't want to release yet? Just don't merge — the Release PR accumulates and u
 | `ci.yml` → quality-gate        | `prek run --all-files`, same source as local git hooks                                               |
 | `ci.yml` → test (ubuntu/macos) | `nix develop -c just ci`                                                                             |
 | `ci.yml` → test (windows)      | native rustup route, same `rust-toolchain.toml`                                                      |
-| `ci.yml` → smoke (init → ci)   | template self-test: the full init → `just ci` flow in a temp dir                                     |
 | `commits.yml`                  | commit-convention check on the PR title + body (the squash-merge commit message); re-runs on retitle |
 | `pr-guard.yml`                 | secret scan of the PR diff — hard fail, the hit is annotated on the PR's Files tab                   |
 | `ci.yml` → dist-drift          | consistency between generated release.yml and `dist-workspace.toml`                                  |
@@ -113,7 +112,7 @@ Don't want to release yet? Just don't merge — the Release PR accumulates and u
 These live in GitHub settings rather than in code; set them once when the repo is created:
 
 - General → Pull Requests: **squash merge only** (disable merge commits and rebase merge); set the squash commit message to "Default to pull request title and description"; enable "Automatically delete head branches".
-- Branches → protect `main`: require a pull request before merging; require status checks `quality gate (prek)`, `test (ubuntu-latest)`, `test (macos-latest)`, `test (windows)`, `smoke (init → ci)`, `conventional commits`, `pr guard`, `release.yml drift check`; require branches to be up to date.
+- Branches → protect `main`: require a pull request before merging; require status checks `quality gate (prek)`, `test (ubuntu-latest)`, `test (macos-latest)`, `test (windows)`, `conventional commits`, `pr guard`, `release.yml drift check`; require branches to be up to date.
 - Actions → General: workflow permissions per the release setup above.
 
 The same settings as a one-shot `gh` block (run inside the repo, authenticated as yourself with `gh auth login` — `{owner}`/`{repo}` auto-resolve from the remote). This is deliberately a documented command block rather than a shipped script: it runs once per repository, needs your admin credentials, and a copy-paste block cannot rot silently the way a shipped one-off script would.
@@ -121,7 +120,7 @@ The same settings as a one-shot `gh` block (run inside the repo, authenticated a
 ```bash
 gh repo edit --enable-squash-merge --enable-merge-commit=false --enable-rebase-merge=false --delete-branch-on-merge --squash-merge-commit-message=pr-title-description
 gh api repos/{owner}/{repo}/actions/permissions/workflow -X PUT -F default_workflow_permissions=write -F can_approve_pull_request_reviews=true
-gh api repos/{owner}/{repo}/branches/main/protection -X PUT -F 'required_status_checks[strict]=true' -F 'required_status_checks[contexts][]=quality gate (prek)' -F 'required_status_checks[contexts][]=test (ubuntu-latest)' -F 'required_status_checks[contexts][]=test (macos-latest)' -F 'required_status_checks[contexts][]=test (windows)' -F 'required_status_checks[contexts][]=smoke (init → ci)' -F 'required_status_checks[contexts][]=conventional commits' -F 'required_status_checks[contexts][]=pr guard' -F 'required_status_checks[contexts][]=release.yml drift check' -F 'required_pull_request_reviews[required_approving_review_count]=0' -F enforce_admins=null -F restrictions=null
+gh api repos/{owner}/{repo}/branches/main/protection -X PUT -F 'required_status_checks[strict]=true' -F 'required_status_checks[contexts][]=quality gate (prek)' -F 'required_status_checks[contexts][]=test (ubuntu-latest)' -F 'required_status_checks[contexts][]=test (macos-latest)' -F 'required_status_checks[contexts][]=test (windows)' -F 'required_status_checks[contexts][]=conventional commits' -F 'required_status_checks[contexts][]=pr guard' -F 'required_status_checks[contexts][]=release.yml drift check' -F 'required_pull_request_reviews[required_approving_review_count]=0' -F enforce_admins=null -F restrictions=null
 gh label create ai-assisted --color 8250df --description "Generative AI co-authored this PR; the pr-preflight judgment pass was run"
 ```
 
@@ -147,7 +146,7 @@ This repository is a dual human/agent artifact. The agent surface:
 - `AGENTS.md` — always-on constraints (commands, NEVER rules, style). Incremental information only: every rule must pass "would an agent err without this?".
 - `.agents/skills/<name>/SKILL.md` — task-activated procedures (progressive disclosure); the authoritative one-line listing lives in AGENTS.md. Constraints live in AGENTS.md; procedures live in skills; reference knowledge lives in `docs/` (linked, never copied).
 - `.claude/skills` symlinks to `.agents/skills` — one source of truth for every host.
-- `just agent-check` (part of `just ci`) smoke-validates this surface: frontmatter shape, name/dir match, size budgets, pointer integrity.
+- `just agent-check` (part of `just ci`) smoke-validates this surface: frontmatter shape, name/dir match, size budgets, AGENTS listing parity, pointer integrity and relative Markdown links.
 
 Boundaries: agents may open PRs but never merge, push tags, or publish; the hard boundary is branch protection, not the instruction files. Repeated agent mistakes become permanent rules via the `rule-maintenance` skill — in the same PR as the fix, not as repeated chat corrections. See ADR-0005 in the template repository for the rationale.
 
