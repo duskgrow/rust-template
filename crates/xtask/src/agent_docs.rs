@@ -5,11 +5,11 @@
 //!   within [`ALLOWED_KEYS`], and whose body fits the progressive-disclosure budget;
 //! - `.claude/skills` points at `.agents/skills` (single source of truth —
 //!   tolerates git's text-file fallback on platforms without symlink support);
-//! - `AGENTS.md` exists, stays within the always-on line budget, and carries
-//!   its freshness note;
+//! - `AGENTS.md` exists, stays within the always-on line budget, carries its
+//!   freshness note, and lists every discovered skill (and no stale ones);
 //! - `CLAUDE.md` is only a reference to AGENTS.md, never a second copy.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -39,27 +39,32 @@ pub fn run(args: &[String]) -> ExitCode {
     let root = Path::new(ROOT);
     let mut failures: Vec<String> = Vec::new();
 
-    let mut skill_files: Vec<PathBuf> = Vec::new();
-    let skills_dir = root.join(".agents/skills");
-    if let Ok(entries) = std::fs::read_dir(&skills_dir) {
-        for entry in entries.flatten() {
-            let candidate = entry.path().join("SKILL.md");
-            if candidate.is_file() {
-                skill_files.push(candidate);
+    let (skill_files, skills_inventory_valid) =
+        match collect_skill_files(&root.join(".agents/skills")) {
+            Ok(files) => {
+                if files.is_empty() {
+                    failures.push(
+                        ".agents/skills: no skills found (expected at least one */SKILL.md)"
+                            .to_string(),
+                    );
+                }
+                (files, true)
             }
-        }
-    }
-    skill_files.sort();
-    if skill_files.is_empty() {
-        failures
-            .push(".agents/skills: no skills found (expected at least one */SKILL.md)".to_string());
-    }
+            Err(err) => {
+                failures.push(err);
+                (Vec::new(), false)
+            }
+        };
     for skill_file in &skill_files {
         check_skill(skill_file, root, &mut failures);
     }
 
     check_claude_skills_link(root, &mut failures);
-    check_agents_md(root, &mut failures);
+    check_agents_md(
+        root,
+        skills_inventory_valid.then_some(skill_files.as_slice()),
+        &mut failures,
+    );
     check_claude_md(root, &mut failures);
 
     if failures.is_empty() {
@@ -74,6 +79,37 @@ pub fn run(args: &[String]) -> ExitCode {
         eprintln!("  - {failure}");
     }
     ExitCode::FAILURE
+}
+
+fn read_dir_entries(dir: &Path) -> Result<Vec<std::fs::DirEntry>, String> {
+    let entries =
+        std::fs::read_dir(dir).map_err(|err| format!("read directory {}: {err}", dir.display()))?;
+    entries
+        .map(|entry| {
+            entry.map_err(|err| format!("read directory entry in {}: {err}", dir.display()))
+        })
+        .collect()
+}
+
+fn collect_skill_files(skills_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    for entry in read_dir_entries(skills_dir)? {
+        let path = entry.path();
+        let metadata =
+            std::fs::metadata(&path).map_err(|err| format!("inspect {}: {err}", path.display()))?;
+        if !metadata.is_dir() {
+            continue;
+        }
+        let candidate = path.join("SKILL.md");
+        match std::fs::metadata(&candidate) {
+            Ok(metadata) if metadata.is_file() => files.push(candidate),
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(format!("inspect {}: {err}", candidate.display())),
+        }
+    }
+    files.sort();
+    Ok(files)
 }
 
 fn check_skill(path: &Path, root: &Path, failures: &mut Vec<String>) {
@@ -95,25 +131,44 @@ fn check_skill(path: &Path, root: &Path, failures: &mut Vec<String>) {
     };
 
     let frontmatter = parse_frontmatter(&frontmatter_text, &rel, failures);
+    let dir_name = path
+        .parent()
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    validate_frontmatter(&frontmatter, &rel, &dir_name, failures);
 
-    let unknown: Vec<&String> = frontmatter
+    if body.chars().count() > SKILL_BODY_BUDGET_CHARS {
+        failures.push(format!(
+            "{rel}: body is {} chars, exceeding the {SKILL_BODY_BUDGET_CHARS}-char budget — move detail into reference files inside the skill directory",
+            body.chars().count()
+        ));
+    }
+}
+
+fn validate_frontmatter(
+    frontmatter: &HashMap<String, String>,
+    rel: &str,
+    dir_name: &str,
+    failures: &mut Vec<String>,
+) {
+    let mut unknown: Vec<&String> = frontmatter
         .keys()
         .filter(|key| !ALLOWED_KEYS.contains(&key.as_str()))
         .collect();
+    unknown.sort();
     if !unknown.is_empty() {
         failures.push(format!(
             "{rel}: unsupported frontmatter keys {unknown:?} — only {ALLOWED_KEYS:?} are allowed; activation conditions belong in `description`, not custom fields"
         ));
     }
 
-    let dir_name = path
-        .parent()
-        .and_then(Path::file_name)
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
     match frontmatter.get("name") {
         None => failures.push(format!("{rel}: frontmatter requires `name`")),
-        Some(name) if *name != dir_name => failures.push(format!(
+        Some(name) if name.is_empty() => {
+            failures.push(format!("{rel}: frontmatter `name` must not be empty"));
+        }
+        Some(name) if name != dir_name => failures.push(format!(
             "{rel}: name {name:?} must equal directory name {dir_name:?}"
         )),
         Some(_) => {}
@@ -121,20 +176,18 @@ fn check_skill(path: &Path, root: &Path, failures: &mut Vec<String>) {
 
     match frontmatter.get("description") {
         None => failures.push(format!("{rel}: frontmatter requires `description`")),
-        Some(description) if !(1..=1024).contains(&description.chars().count()) => {
+        Some(description) if description.is_empty() => {
+            failures.push(format!(
+                "{rel}: frontmatter `description` must not be empty"
+            ));
+        }
+        Some(description) if description.chars().count() > 1024 => {
             failures.push(format!(
                 "{rel}: description must be 1..1024 chars (got {})",
                 description.chars().count()
             ));
         }
         Some(_) => {}
-    }
-
-    if body.chars().count() > SKILL_BODY_BUDGET_CHARS {
-        failures.push(format!(
-            "{rel}: body is {} chars, exceeding the {SKILL_BODY_BUDGET_CHARS}-char budget — move detail into reference files inside the skill directory",
-            body.chars().count()
-        ));
     }
 }
 
@@ -156,9 +209,11 @@ fn split_frontmatter(text: &str) -> Result<(String, String), &'static str> {
 /// Parse the single-line `key: value` subset this checker supports. There is
 /// no YAML parser in std, so validate against what strict YAML hosts reject:
 /// an unquoted `: ` (or trailing `:`) ends the scalar there, and a leading
-/// indicator char starts a construct this line-based format forbids.
+/// indicator char starts a construct this line-based format forbids. Plain
+/// scalar comments start at a `#` preceded by YAML separation whitespace.
 fn parse_frontmatter(text: &str, rel: &str, failures: &mut Vec<String>) -> HashMap<String, String> {
     let mut frontmatter = HashMap::new();
+    let mut seen_keys = HashSet::new();
     for line in text.lines() {
         let stripped = line.trim();
         if stripped.is_empty() || stripped.starts_with('#') {
@@ -169,8 +224,18 @@ fn parse_frontmatter(text: &str, rel: &str, failures: &mut Vec<String>) -> HashM
             continue;
         };
         let key = key.trim().to_string();
+        if !seen_keys.insert(key.clone()) {
+            failures.push(format!("{rel}: duplicate frontmatter key {key:?}"));
+            continue;
+        }
         let value = value.trim();
-        if value.starts_with('"') || value.starts_with('\'') {
+        let quoted = value.starts_with('"') || value.starts_with('\'');
+        let value = if quoted {
+            value
+        } else {
+            strip_plain_comment(value)
+        };
+        if quoted {
             let quote = value.as_bytes()[0];
             if value.len() < 2 || !value.ends_with(char::from(quote)) {
                 failures.push(format!("{rel}: unterminated quoted scalar for {key:?}"));
@@ -193,6 +258,19 @@ fn parse_frontmatter(text: &str, rel: &str, failures: &mut Vec<String>) -> HashM
         frontmatter.insert(key, value.trim_matches(['"', '\'']).to_string());
     }
     frontmatter
+}
+
+/// Strip a YAML plain-scalar comment without treating `value#part` as a
+/// comment. The value has already been trimmed, so a leading `#` is a comment.
+fn strip_plain_comment(value: &str) -> &str {
+    let comment = value.char_indices().find_map(|(index, ch)| {
+        if ch != '#' {
+            return None;
+        }
+        let separated = index == 0 || matches!(value.as_bytes()[index - 1], b' ' | b'\t');
+        separated.then_some(index)
+    });
+    comment.map_or(value, |index| value[..index].trim_end())
 }
 
 fn check_claude_skills_link(root: &Path, failures: &mut Vec<String>) {
@@ -223,7 +301,7 @@ fn check_claude_skills_link(root: &Path, failures: &mut Vec<String>) {
     }
 }
 
-fn check_agents_md(root: &Path, failures: &mut Vec<String>) {
+fn check_agents_md(root: &Path, skill_files: Option<&[PathBuf]>, failures: &mut Vec<String>) {
     let path = root.join("AGENTS.md");
     let Ok(text) = std::fs::read_to_string(&path) else {
         failures.push("AGENTS.md: missing".to_string());
@@ -245,6 +323,88 @@ fn check_agents_md(root: &Path, failures: &mut Vec<String>) {
             "AGENTS.md: missing the freshness note (Last reviewed) in the header".to_string(),
         );
     }
+    if let Some(skill_files) = skill_files {
+        let actual: BTreeSet<String> = skill_files
+            .iter()
+            .filter_map(|path| path.parent())
+            .filter_map(Path::file_name)
+            .map(|name| name.to_string_lossy().into_owned())
+            .collect();
+        check_agents_skill_list(&text, &actual, failures);
+    }
+}
+
+/// Compare only the dedicated Skills section's list items with the on-disk
+/// inventory. Mentions in prose or other sections must not satisfy the listing.
+fn check_agents_skill_list(text: &str, actual: &BTreeSet<String>, failures: &mut Vec<String>) {
+    let entries = match agents_skill_entries(text) {
+        Ok(entries) => entries,
+        Err(reason) => {
+            failures.push(format!("AGENTS.md: {reason}"));
+            return;
+        }
+    };
+    let mut listed = BTreeSet::new();
+    for (line, name) in entries {
+        if !listed.insert(name.clone()) {
+            failures.push(format!(
+                "AGENTS.md:{line}: duplicate skill listing {name:?}"
+            ));
+        }
+        if !actual.contains(&name) {
+            failures.push(format!(
+                "AGENTS.md:{line}: listed skill {name:?} has no .agents/skills/{name}/SKILL.md"
+            ));
+        }
+    }
+    for name in actual.difference(&listed) {
+        failures.push(format!(
+            "AGENTS.md Skills: missing one-line listing for {name:?}"
+        ));
+    }
+}
+
+fn agents_skill_entries(text: &str) -> Result<Vec<(usize, String)>, &'static str> {
+    let mut in_skills = false;
+    let mut found = false;
+    let mut entries = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        if line.starts_with("## ") {
+            if in_skills {
+                break;
+            }
+            in_skills = line
+                .strip_prefix("## Skills")
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace));
+            found |= in_skills;
+            continue;
+        }
+        if !in_skills {
+            continue;
+        }
+        if let Some(name) = agents_skill_entry(line) {
+            entries.push((index + 1, name));
+        }
+    }
+    if found {
+        Ok(entries)
+    } else {
+        Err("missing `## Skills` section")
+    }
+}
+
+fn agents_skill_entry(line: &str) -> Option<String> {
+    let rest = line.trim_start().strip_prefix("- `")?;
+    let (name, suffix) = rest.split_once('`')?;
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        || !(suffix.is_empty() || suffix.starts_with(char::is_whitespace))
+    {
+        return None;
+    }
+    Some(name.to_string())
 }
 
 fn check_claude_md(root: &Path, failures: &mut Vec<String>) {
@@ -274,6 +434,10 @@ mod tests {
         let mut failures = Vec::new();
         let frontmatter = parse_frontmatter(text, "test/SKILL.md", &mut failures);
         (frontmatter, failures)
+    }
+
+    fn temp_root(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("xtask-agent-docs-{name}-{}", std::process::id()))
     }
 
     #[test]
@@ -306,6 +470,48 @@ mod tests {
     }
 
     #[test]
+    fn plain_scalar_comments_are_stripped_only_at_separation_whitespace() {
+        let (frontmatter, failures) =
+            parse("name: demo # directory name\ndescription: short # see: details\n");
+        assert!(failures.is_empty());
+        assert_eq!(frontmatter["name"], "demo");
+        assert_eq!(frontmatter["description"], "short");
+
+        let (frontmatter, failures) = parse("description: value#part\n");
+        assert!(failures.is_empty());
+        assert_eq!(frontmatter["description"], "value#part");
+    }
+
+    #[test]
+    fn comment_only_name_and_description_fail_non_empty_validation() {
+        let (frontmatter, mut failures) = parse("name: # comment\ndescription: # comment\n");
+        assert!(failures.is_empty());
+        assert_eq!(frontmatter["name"], "");
+        assert_eq!(frontmatter["description"], "");
+
+        validate_frontmatter(&frontmatter, "test/SKILL.md", "demo", &mut failures);
+        assert_eq!(failures.len(), 2);
+        assert!(
+            failures
+                .iter()
+                .any(|error| error.contains("`name` must not be empty"))
+        );
+        assert!(
+            failures
+                .iter()
+                .any(|error| error.contains("`description` must not be empty"))
+        );
+    }
+
+    #[test]
+    fn duplicate_frontmatter_keys_are_rejected() {
+        let (frontmatter, failures) = parse("name: first\nname: second\ndescription: short\n");
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("duplicate frontmatter key \"name\""));
+        assert_eq!(frontmatter["name"], "first");
+    }
+
+    #[test]
     fn unquoted_colon_space_is_rejected() {
         let (_, failures) = parse("description: layer on top: diff self-review\n");
         assert_eq!(failures.len(), 1);
@@ -313,10 +519,10 @@ mod tests {
     }
 
     #[test]
-    fn quoted_colon_space_is_accepted() {
-        let (frontmatter, failures) = parse("description: \"layer on top: diff\"\n");
+    fn quoted_colon_space_and_hash_are_preserved() {
+        let (frontmatter, failures) = parse("description: \"layer on top: diff # literal\"\n");
         assert!(failures.is_empty());
-        assert_eq!(frontmatter["description"], "layer on top: diff");
+        assert_eq!(frontmatter["description"], "layer on top: diff # literal");
     }
 
     #[test]
@@ -325,5 +531,58 @@ mod tests {
         assert_eq!(failures.len(), 1);
         let (_, failures) = parse("description: >- folded\n");
         assert_eq!(failures.len(), 1);
+    }
+
+    #[test]
+    fn missing_skill_directory_is_an_explicit_error() {
+        let missing = temp_root("missing-dir");
+        let _ = std::fs::remove_dir_all(&missing);
+        let error = collect_skill_files(&missing).unwrap_err();
+        assert!(error.contains("read directory"), "{error}");
+        assert!(error.contains(&missing.display().to_string()), "{error}");
+    }
+
+    #[test]
+    fn agents_skill_listing_is_bidirectional_and_section_scoped() {
+        let actual = BTreeSet::from(["missing".to_string(), "present".to_string()]);
+        let text = "Prose mentions `outside` and `present`.\n\
+                    ## Skills (procedures)\n\
+                    - `present` — actual skill\n\
+                    - `present` — duplicate in the same section\n\
+                    - `stale` — no such directory\n\
+                    ## Style\n\
+                    - `outside` — must not count as a listing\n\
+                    - `present` — must not duplicate the real entry\n";
+        let mut failures = Vec::new();
+        check_agents_skill_list(text, &actual, &mut failures);
+        assert_eq!(failures.len(), 3, "{failures:?}");
+        assert!(
+            failures
+                .iter()
+                .any(|error| error.contains("duplicate skill listing \"present\""))
+        );
+        assert!(
+            failures
+                .iter()
+                .any(|error| error.contains("listed skill \"stale\""))
+        );
+        assert!(
+            failures
+                .iter()
+                .any(|error| error.contains("missing one-line listing for \"missing\""))
+        );
+        assert!(!failures.iter().any(|error| error.contains("outside")));
+    }
+
+    #[test]
+    fn agents_skill_listing_requires_its_section() {
+        let mut failures = Vec::new();
+        check_agents_skill_list(
+            "- `present` — prose, not a section\n",
+            &BTreeSet::new(),
+            &mut failures,
+        );
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("missing `## Skills` section"));
     }
 }
