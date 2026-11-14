@@ -146,7 +146,7 @@ This repository is a dual human/agent artifact. The agent surface:
 - `AGENTS.md` — always-on constraints (commands, NEVER rules, style). Incremental information only: every rule must pass "would an agent err without this?".
 - `.agents/skills/<name>/SKILL.md` — task-activated procedures (progressive disclosure); the authoritative one-line listing lives in AGENTS.md. Constraints live in AGENTS.md; procedures live in skills; reference knowledge lives in `docs/` (linked, never copied).
 - `.claude/skills` symlinks to `.agents/skills` — one source of truth for every host.
-- `just agent-check` (part of `just ci`) smoke-validates this surface: frontmatter shape, name/dir match, size budgets, pointer integrity.
+- `just agent-check` (part of `just ci`) smoke-validates this surface: frontmatter shape, name/dir match, size budgets, AGENTS listing parity, pointer integrity and relative Markdown links.
 
 Boundaries: agents may open PRs but never merge, push tags, or publish; the hard boundary is branch protection, not the instruction files. Repeated agent mistakes become permanent rules via the `rule-maintenance` skill — in the same PR as the fix, not as repeated chat corrections. See ADR-0005 in the template repository for the rationale.
 

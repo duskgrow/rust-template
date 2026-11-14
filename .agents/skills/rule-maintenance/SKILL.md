@@ -14,8 +14,10 @@ of being re-corrected in chat every session.
 - **A mistake repeats** — you (the agent) were corrected twice for the same
   thing, or a human had to re-explain something in a new session. That is a
   missing or wrong rule.
-- **A rule goes stale** — it references a deleted file/command/dependency.
-  Fix or delete it in the _same PR that caused the staleness_.
+- **A rule goes stale** — it references a deleted file/command/dependency, or
+  states a number (timing, count, cost anchor) that no longer matches the tree.
+  Fix or delete it in the _same PR that caused the staleness_; for a stale
+  number, delete the number rather than refreshing it.
 - **Tooling changes** — the justfile changed → sync the Commands section of
   AGENTS.md; a new generated file or a new workflow appeared → sync the NEVER
   section; a new skill is added → it is auto-discovered, AGENTS.md only needs
@@ -40,6 +42,10 @@ than they read).
   pointer_ (the lint / CI job / drift check that bites if violated). A rule
   without an enforcement point will rot — say so explicitly when accepting
   one.
+- Never embed decaying data — timings, counts, cost anchors, speedup factors.
+  The codebase moves, the number silently becomes false, and agents act on it.
+  Write the causal model plus the command that produces the number, and let it
+  be measured on demand. Dated historical evidence in ADRs is exempt.
 - Keep the freshness comment at the top of AGENTS.md current (what each
   section tracks + last-reviewed date).
 

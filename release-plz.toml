@@ -47,7 +47,7 @@ pr_body = """
 {% endfor -%}
 """
 # changelog: generated from commit messages, grouped by module (the commit
-# convention's scope). Never hand-edit released sections.
+# convention's scope). Never hand-edit any generated entry, released or not.
 [changelog]
 commit_parsers = [
   # scoped commits get their own module section (Zed-style release notes)
