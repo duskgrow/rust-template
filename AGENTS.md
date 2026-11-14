@@ -28,7 +28,7 @@
 - `rule-maintenance` — how to update AGENTS.md and skills when rules change or mistakes repeat
 - `doc-maintenance` — writing/reviewing docs: three-question filter, EN-canonical translation sync, drift hunting
 - `code-simplification` — behavior-preserving dedup/dead-code/abstraction cleanup, always as its own change
-
+- `explain-diff` — maintainer-facing rich HTML walkthrough of a change + in-chat quiz, for reading large diffs
 - `release-review` — the human-gate checklist for merging a release-plz Release PR
 
 Done = `just ci` green + the `pr-preflight` checklist clean.
