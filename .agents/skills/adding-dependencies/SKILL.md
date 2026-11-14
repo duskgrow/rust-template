@@ -38,22 +38,25 @@ skill is what to prepare before asking.
 ## 3. Temporary exceptions carry a staleness fuse
 
 When a dependency forces a `deny.toml` exception (advisory ignore, license
-entry), the exception is temporary inventory and must be self-cleaning:
+entry, duplicate skip), the exception is temporary inventory and must be
+self-cleaning:
 
-- **Per-crate, never global**: use `[licenses] exceptions` for the named
-  crate. Widening the global `allow` list silently admits every future
-  crate under that license — the gate must keep biting new arrivals.
+- **Per-crate, never global**: use `[licenses] exceptions` / `[bans] skip`
+  for the named crate or version. Widening the global `allow` list silently
+  admits every future crate under that license — the gate must keep biting
+  new arrivals.
 - **Comment the removal trigger** on the entry: which dependency brings it
   in, and what change removes it.
-- **The fuse is the gate**: `just deny` runs with `-D advisory-not-detected
-  -D license-exception-not-encountered`, so an entry whose crate has left
-  the tree fails CI. The dependency-update PR that clears the condition is
-  the one forced to delete the entry — nobody has to remember.
+- **The fuse is the gate**: `just deny` denies each exception kind's
+  staleness lint (the recipe is the flag-list SSOT), so an entry whose
+  target has left the tree fails CI. The dependency-update PR that clears
+  the condition is the one forced to delete or re-pin the entry — nobody
+  has to remember.
 
 The same shape applies to any temporary workaround, dependency-related or
 not: ship it with a machine-checkable clearing condition wired into
-`just ci`; if no machine check exists, attach it to a milestone checklist
-entry (roadmap / handoff) instead of a lone code comment.
+`just ci`; if no machine check exists, attach it to a tracked milestone or
+issue instead of a lone code comment.
 
 ## 4. Ask
 
