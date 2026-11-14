@@ -8,7 +8,7 @@
 //! When `$GITHUB_OUTPUT` is set, `changed=<true|false>` and (on change)
 //! `version=<X.Y.Z>` are appended for the calling workflow step.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const CHANNEL_URL: &str = "https://static.rust-lang.org/dist/channel-rust-stable.toml";
@@ -20,22 +20,23 @@ pub fn run(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
     match bump() {
-        Ok(Outcome::UpToDate(current)) => {
-            println!("rust toolchain is up to date ({current})");
-            set_output("changed", "false");
-            ExitCode::SUCCESS
-        }
-        Ok(Outcome::Bumped { from, to }) => {
-            println!("bumped rust toolchain: {from} -> {to}");
-            set_output("changed", "true");
-            set_output("version", &to);
-            ExitCode::SUCCESS
-        }
+        Ok(outcome) => match report_outcome(&outcome) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                eprintln!("error: {message}");
+                ExitCode::FAILURE
+            }
+        },
         Err(message) => {
             eprintln!("error: {message}");
             ExitCode::FAILURE
         }
     }
+}
+
+fn report_outcome(outcome: &Outcome) -> Result<(), String> {
+    let path = std::env::var_os("GITHUB_OUTPUT").map(PathBuf::from);
+    report_outcome_at(outcome, path.as_deref())
 }
 
 enum Outcome {
@@ -170,16 +171,65 @@ fn bumped_content(content: &str, new_version: &str) -> Option<String> {
     Some(out)
 }
 
-/// Append `key=value` for the calling GitHub Actions step; a no-op locally.
-fn set_output(key: &str, value: &str) {
-    use std::io::Write as _;
-    let Ok(path) = std::env::var("GITHUB_OUTPUT") else {
-        return;
+/// Append outputs for the calling GitHub Actions step; use a sink locally.
+/// Once the runner requests outputs, failing to emit one is a command failure:
+/// otherwise the workflow can silently skip validation and PR creation.
+fn report_outcome_at(outcome: &Outcome, path: Option<&Path>) -> Result<(), String> {
+    match path {
+        Some(path) => {
+            let writer = open_output(path)?;
+            report_outcome_with(outcome, Some(path), writer)
+        }
+        None => report_outcome_with(outcome, None, std::io::sink()),
+    }
+}
+
+fn open_output(path: &Path) -> Result<std::fs::File, String> {
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .map_err(|err| format!("cannot open GitHub output {}: {err}", path.display()))
+}
+
+fn report_outcome_with(
+    outcome: &Outcome,
+    output_path: Option<&Path>,
+    mut writer: impl std::io::Write,
+) -> Result<(), String> {
+    match outcome {
+        Outcome::UpToDate(current) => {
+            write_output_at(&mut writer, output_path, "changed", "false")?;
+            println!("rust toolchain is up to date ({current})");
+        }
+        Outcome::Bumped { from, to } => {
+            write_output_at(&mut writer, output_path, "changed", "true")?;
+            write_output_at(&mut writer, output_path, "version", to)?;
+            println!("bumped rust toolchain: {from} -> {to}");
+        }
+    }
+    Ok(())
+}
+
+fn write_output_at(
+    writer: &mut impl std::io::Write,
+    path: Option<&Path>,
+    key: &str,
+    value: &str,
+) -> Result<(), String> {
+    let Some(path) = path else {
+        return Ok(());
     };
-    let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(path) else {
-        return;
-    };
-    let _ = writeln!(file, "{key}={value}");
+    write_output(writer, path, key, value)
+}
+
+fn write_output(
+    writer: &mut impl std::io::Write,
+    path: &Path,
+    key: &str,
+    value: &str,
+) -> Result<(), String> {
+    writeln!(writer, "{key}={value}")
+        .map_err(|err| format!("cannot write GitHub output {}: {err}", path.display()))
 }
 
 #[cfg(test)]
@@ -211,5 +261,80 @@ mod tests {
         assert!(updated.contains("# a comment"));
         assert!(updated.ends_with('\n'));
         assert!(!updated.contains("1.94.0"));
+    }
+
+    fn bumped_outcome() -> Outcome {
+        Outcome::Bumped {
+            from: "1.97.0".to_string(),
+            to: "1.98.0".to_string(),
+        }
+    }
+
+    #[test]
+    fn report_is_a_noop_without_an_output_path() {
+        let outcome = Outcome::UpToDate("1.98.0".to_string());
+        report_outcome_at(&outcome, None).unwrap();
+    }
+
+    #[test]
+    fn report_bumped_writes_changed_and_version() {
+        let outcome = Outcome::Bumped {
+            from: "1.94.0".to_string(),
+            to: "1.98.0".to_string(),
+        };
+        let mut output = Vec::new();
+        report_outcome_with(&outcome, Some(Path::new("output.txt")), &mut output).unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "changed=true\nversion=1.98.0\n"
+        );
+    }
+
+    #[test]
+    fn report_up_to_date_writes_only_changed() {
+        let outcome = Outcome::UpToDate("1.98.0".to_string());
+        let mut output = Vec::new();
+        report_outcome_with(&outcome, Some(Path::new("output.txt")), &mut output).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "changed=false\n");
+    }
+
+    #[test]
+    fn output_writes_the_expected_line() {
+        let mut output = Vec::new();
+        write_output(&mut output, Path::new("unused"), "changed", "true").unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "changed=true\n");
+    }
+
+    #[test]
+    fn report_returns_output_open_failure_with_the_path() {
+        let parent = std::env::temp_dir().join(format!(
+            "xtask-toolchain-output-missing-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&parent);
+        let path = parent.join("output.txt");
+        let error = report_outcome_at(&bumped_outcome(), Some(&path)).unwrap_err();
+        assert!(error.contains("cannot open GitHub output"), "{error}");
+        assert!(error.contains(&path.display().to_string()), "{error}");
+    }
+
+    #[test]
+    fn report_returns_output_write_failure_with_the_path() {
+        struct FailingWriter;
+        impl std::io::Write for FailingWriter {
+            fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("injected write failure"))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let path = Path::new("runner-output.txt");
+        let error = report_outcome_with(&bumped_outcome(), Some(path), FailingWriter).unwrap_err();
+        assert!(error.contains("cannot write GitHub output"), "{error}");
+        assert!(error.contains("runner-output.txt"), "{error}");
+        assert!(error.contains("injected write failure"), "{error}");
     }
 }

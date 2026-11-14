@@ -42,14 +42,16 @@
 
           shellHook = ''
             # Git hooks cannot travel with a clone (git's security model), so the
-            # devShell arms them on entry — idempotent, silent, and skipped in CI
-            # and before `just init` creates .git. Non-Nix shells: `just setup`.
+            # devShell arms them on entry — idempotent and skipped in CI and
+            # before `just init` creates .git. Non-Nix shells: `just setup`.
             if [ -e .git ] && [ -z "''${CI:-}" ]; then
-              prek install --hook-type pre-commit --hook-type commit-msg >/dev/null 2>&1 || true
+              if ! prek install --hook-type pre-commit --hook-type commit-msg >/dev/null 2>&1; then
+                echo "warning: could not install git hooks; run 'just setup' to diagnose" >&2
+              fi
             fi
             # Banner goes to stderr: stdout of `nix develop -c <cmd>` must stay
             # clean for output-capturing callers (rust-cache's cmd-format parses it).
-            echo "devShell ready. Entry point: just --list (git hooks arm themselves on shell entry)" >&2
+            echo "devShell ready. Entry point: just --list" >&2
           '';
         };
 

@@ -32,9 +32,16 @@ pub fn run(args: &[String]) -> ExitCode {
     }
 }
 
-/// The local-hook half: secret-scan `git diff --cached`.
+/// The local-hook half: secret-scan `git diff --cached`. External diff drivers
+/// and textconv must not be able to replace the patch with an empty success.
+fn staged_diff_command() -> Command {
+    let mut command = Command::new("git");
+    command.args(["diff", "--cached", "--no-ext-diff", "--no-textconv"]);
+    command
+}
+
 fn staged() -> ExitCode {
-    let diff = match Command::new("git").args(["diff", "--cached"]).output() {
+    let diff = match staged_diff_command().output() {
         Ok(output) if output.status.success() => {
             String::from_utf8_lossy(&output.stdout).into_owned()
         }
@@ -462,6 +469,17 @@ mod tests {
         // digit and underscore arms of the token-character classes
         let mixed = format!("+ghp_{}", "A1_b2".repeat(6));
         assert_eq!(paths(&scan_diff(&mixed)), vec!["GitHub token"]);
+    }
+
+    #[test]
+    fn staged_diff_disables_external_diff_and_textconv() {
+        let command = staged_diff_command();
+        assert_eq!(command.get_program(), "git");
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, ["diff", "--cached", "--no-ext-diff", "--no-textconv"]);
     }
 
     #[test]

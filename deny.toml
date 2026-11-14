@@ -17,7 +17,9 @@ highlight = "all"
 [licenses]
 # A new dependency's license must already be on this list; extending the list
 # requires a discussion in the PR first. Prefer a per-crate exception below
-# over widening this global list.
+# over widening this global list. The list is pre-authorization, not a claim
+# about the current tree: an entry no crate currently uses is not a defect.
+unused-allowed-license = "allow"
 allow = [
   "MIT",
   "Apache-2.0",
